@@ -48,6 +48,21 @@
 
 ## Architecture
 
+### Two-Tool Design
+
+**cargo-ros2** is split into two complementary tools:
+
+1. **`cargo-ros2-bindgen`** - Low-level binding generator
+   - Generates Rust bindings for a single ROS interface package
+   - Can be used standalone
+   - MVP: Shells out to Python `rosidl_generator_rs`
+
+2. **`cargo-ros2`** - High-level build orchestrator
+   - Three-phase workflow: generate bindings → build → install
+   - Discovers ROS dependencies from Cargo.toml
+   - Manages cache, patches .cargo/config.toml
+   - Absorbs cargo-ament-build functionality
+
 ### Directory Structure
 
 ```
@@ -123,13 +138,16 @@ cargo ros2 ament-build --install-base <path>  # Generate + build + install (with
 
 ### Key Files
 
+**Primary Documentation** (minimalist style):
 - `CLAUDE.md` - This file (project instructions)
-- `docs/UNIFIED_ARCHITECTURE.md` - **⭐ NEW: Complete unified architecture (absorbing cargo-ament-build)**
-- `docs/DESIGN.md` - Detailed technical design
-- `docs/ROADMAP.md` - Implementation roadmap with phases
-- `docs/CARGO_AMENT_INTEGRATION.md` - Integration with cargo-ament-build (historical context)
-- `docs/COLCON_PLUGINS_COMPARISON.md` - Difference between colcon-cargo and colcon-ros-cargo
-- `docs/COMPARISON.md` - Comparison with ros2_rust, r2r, etc. (future)
+- `docs/ARCH.md` - **⭐ Architecture overview (two-tool design)**
+- `docs/DESIGN.md` - Implementation details
+- `docs/ROADMAP.md` - Phase-by-phase implementation plan
+
+**Reference**:
+- `external/` - ros2_rust packages for reference (rosidl_rust, rosidl_runtime_rs, etc.)
+- `tmp/` - Cloned repos for analysis (cargo-ament-build, colcon-ros-cargo)
+- `docs/archive/` - Verbose design docs (historical)
 
 ## Development Guidelines
 
