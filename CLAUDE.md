@@ -1,10 +1,14 @@
-# cargo-ros2: Project-Centric ROS 2 Rust Bindings
+# cargo-ros2: All-in-One ROS 2 Rust Build Tool
 
 ## Project Overview
 
-**cargo-ros2** is a next-generation build tool for ROS 2 Rust projects that solves the fundamental circular dependency problem in current ros2_rust implementations.
+**cargo-ros2** is a next-generation, unified build tool for ROS 2 Rust projects that solves the fundamental circular dependency problem in current ros2_rust implementations **and** provides complete ament-compatible installation.
 
-**Core Innovation**: Project-local binding generation in `target/ros2_bindings/` with automatic Cargo patch management, enabling seamless integration with system-installed ROS packages.
+**Core Innovation**:
+1. **Pre-build**: Project-local binding generation in `target/ros2_bindings/` with automatic Cargo patch management
+2. **Post-build**: Complete ament layout installation (absorbing cargo-ament-build functionality)
+
+**📖 See `docs/UNIFIED_ARCHITECTURE.md` for the complete architectural design.**
 
 ## The Problem We're Solving
 
@@ -30,13 +34,17 @@
 
 ### Our Solution
 
-**Project-local virtual registry** approach:
-1. `cargo ros2 build` wrapper intercepts build
+**Unified all-in-one build tool** approach:
+1. **Pre-build**: `cargo ros2` intercepts build process
 2. Discovers ROS packages via `ament_index` (works with system packages!)
 3. Generates Rust bindings to `target/ros2_bindings/<pkg>/`
 4. Auto-configures `.cargo/config.toml` patches
-5. Invokes standard `cargo build`
-6. Cargo resolves deps → patches redirect to local bindings → success!
+5. **Build**: Invokes standard `cargo build` (or `check` for pure libs)
+6. **Post-build**: Installs to ament layout (replaces cargo-ament-build)
+   - Binaries → `install/<pkg>/lib/<pkg>/`
+   - Source → `install/<pkg>/share/<pkg>/rust/`
+   - Markers → `share/ament_index/resource_index/`
+7. Success - ready for colcon!
 
 ## Architecture
 
@@ -104,22 +112,37 @@ See `docs/ROADMAP.md` for detailed implementation plan.
 ### Commands (Future)
 
 ```bash
-cargo ros2 build              # Build with binding generation
-cargo ros2 clean              # Clean bindings + artifacts
-cargo ros2 check              # Fast check (reuses bindings)
-cargo ros2 test               # Test with bindings
-cargo ros2 cache --list       # Show cached bindings
-cargo ros2 cache --rebuild    # Force regeneration
+cargo ros2 build                        # Build with binding generation
+cargo ros2 clean                        # Clean bindings + artifacts
+cargo ros2 check                        # Fast check (reuses bindings)
+cargo ros2 test                         # Test with bindings
+cargo ros2 cache --list                 # Show cached bindings
+cargo ros2 cache --rebuild              # Force regeneration
+cargo ros2 ament-build --install-base <path>  # Generate + build + install (with cargo-ament-build)
 ```
 
 ### Key Files
 
 - `CLAUDE.md` - This file (project instructions)
+- `docs/UNIFIED_ARCHITECTURE.md` - **⭐ NEW: Complete unified architecture (absorbing cargo-ament-build)**
 - `docs/DESIGN.md` - Detailed technical design
 - `docs/ROADMAP.md` - Implementation roadmap with phases
+- `docs/CARGO_AMENT_INTEGRATION.md` - Integration with cargo-ament-build (historical context)
+- `docs/COLCON_PLUGINS_COMPARISON.md` - Difference between colcon-cargo and colcon-ros-cargo
 - `docs/COMPARISON.md` - Comparison with ros2_rust, r2r, etc. (future)
 
 ## Development Guidelines
+
+### Temporary Files
+
+**Important**: All temporary files and directories (downloads, clones, analysis artifacts) should be created in `$PROJECT_ROOT/tmp/`. This directory is gitignored and keeps the workspace clean.
+
+```bash
+# Use project-local tmp directory
+mkdir -p tmp/
+cd tmp/
+# ... work with temporary files ...
+```
 
 ### Code Quality
 
@@ -147,7 +170,8 @@ cargo test                    # Run tests
 
 - **ros2_rust**: Current official Rust bindings (workspace-based approach)
 - **r2r**: Alternative bindings (build.rs generation, slower builds)
-- **colcon-ros-cargo**: Build plugin we'll integrate with
+- **cargo-ament-build**: Installs Cargo artifacts in ament layout (**being absorbed into cargo-ros2**)
+- **colcon-ros-cargo**: Build plugin we'll integrate with (and potentially fork/modify)
 
 ## License
 
