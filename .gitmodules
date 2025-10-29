@@ -1,0 +1,3 @@
+[submodule "colcon-ros-cargo"]
+	path = colcon-ros-cargo
+	url = https://github.com/jerry73204/colcon-ros-cargo.git
