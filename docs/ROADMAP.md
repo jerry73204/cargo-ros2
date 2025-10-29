@@ -161,10 +161,12 @@ cargo ros2 build
 
 ---
 
-## Phase 2: Services, Actions, Cache
+## Phase 2: Services, Actions, Cache, Ament Installation
 
-**Duration**: 3-4 weeks
-**Goal**: Complete feature set for production use
+**Duration**: 4-5 weeks
+**Goal**: Complete feature set for production use + ament installation (absorbing cargo-ament-build)
+
+**📖 See `docs/UNIFIED_ARCHITECTURE.md` for the complete unified architecture design.**
 
 ### Milestones
 
@@ -241,11 +243,57 @@ cargo ros2 build              # 15s (partial regeneration)
 
 **Target**: Cold build < 30s, Hot build < 2s
 
-#### 2.6: Documentation (Week 3-4)
+#### 2.6: Ament Installation (Week 3-4) **[NEW - UNIFIED ARCHITECTURE]**
+
+**Background**: Absorbing cargo-ament-build functionality into cargo-ros2 for a unified tool.
+
+- [ ] Extract installation code from cargo-ament-build (in `tmp/cargo-ament-build/`)
+  - [ ] `create_package_marker()` - ament_index marker creation
+  - [ ] `install_package()` - Source code installation
+  - [ ] `install_binaries()` - Binary/library installation
+  - [ ] `install_files_from_metadata()` - Metadata-based file installation
+  - [ ] Pure library detection logic (check vs build)
+- [ ] Implement new modules in cargo-ros2-core
+  - [ ] `src/installer.rs` - Main installation orchestration
+  - [ ] `src/marker.rs` - Marker creation
+  - [ ] `src/source_install.rs` - Source installation
+  - [ ] `src/binary_install.rs` - Binary installation
+  - [ ] `src/metadata_install.rs` - Metadata installation
+- [ ] Implement `AmentBuilder` struct
+  - [ ] Orchestrate: generate → build → install
+  - [ ] Handle build vs check decision
+  - [ ] Parse features, profiles, architectures
+- [ ] Implement `cargo ros2 ament-build` command
+  - [ ] Parse `--install-base`, `--build-base` args
+  - [ ] Forward cargo args after `--`
+  - [ ] Invoke AmentBuilder
+- [ ] Add dependencies to Cargo.toml
+  - [ ] `cargo-manifest = "0.17"` (Cargo.toml parsing)
+  - [ ] `anyhow = "1.0"` (error handling)
+- [ ] Integration tests
+  - [ ] Test with real ROS 2 package
+  - [ ] Verify ament layout structure
+  - [ ] Compare with cargo-ament-build output
+  - [ ] Test metadata installation
+
+**Acceptance Criteria**:
+```bash
+cargo ros2 ament-build --install-base install/my_pkg -- --release
+# → Generates bindings (if needed)
+# → Builds package
+# → Installs to install/my_pkg/ with ament layout:
+#    - lib/my_pkg/ (binaries)
+#    - share/my_pkg/rust/ (source)
+#    - share/my_pkg/ (package.xml)
+#    - share/ament_index/resource_index/ (markers)
+# → Output identical to cargo-ament-build
+```
+
+#### 2.7: Documentation (Week 4-5)
 - [ ] User guide (installation, usage)
 - [ ] API documentation (rustdoc)
 - [ ] Troubleshooting guide
-- [ ] Migration guide (from ros2_rust)
+- [ ] Migration guide (from ros2_rust **and cargo-ament-build**)
 - [ ] Video tutorial (optional)
 
 ### Phase 2 Deliverables
@@ -254,6 +302,7 @@ cargo ros2 build              # 15s (partial regeneration)
 - [x] Smart caching system
 - [x] Enhanced CLI
 - [x] Performance optimizations
+- [x] **Ament installation (cargo-ament-build functionality absorbed)**
 - [x] Comprehensive documentation
 
 ### Phase 2 Success Metrics
@@ -262,6 +311,8 @@ cargo ros2 build              # 15s (partial regeneration)
 - ✅ Cache hit rate > 95% in typical workflow
 - ✅ Cold build < 30s
 - ✅ Hot build < 2s
+- ✅ **Ament installation produces identical output to cargo-ament-build**
+- ✅ **`cargo ros2 ament-build` works as drop-in replacement**
 - ✅ Zero configuration for users
 
 ---
@@ -273,21 +324,57 @@ cargo ros2 build              # 15s (partial regeneration)
 
 ### Milestones
 
-#### 3.1: colcon Plugin (Week 1-2)
-- [ ] Study colcon-ros-cargo internals
-- [ ] Implement colcon integration
-  - [ ] Hook into colcon build pipeline
-  - [ ] Auto-invoke cargo ros2 build
-  - [ ] Pass through colcon flags
+#### 3.1: colcon-ros-cargo Modification & Fork (Week 1-2)
+
+**Background**: cargo-ros2 now provides complete ament installation (Phase 2.6). We need to modify colcon-ros-cargo to call `cargo ros2` instead of `cargo ament-build`. See `docs/UNIFIED_ARCHITECTURE.md` for details.
+
+**Tasks**:
+- [ ] Fork colcon-ros-cargo (in `tmp/colcon-ros-cargo/`)
+  - [ ] Create fork on GitHub: `ros2-rust-community/colcon-ros-cargo`
+  - [ ] Document fork rationale
+- [ ] Modify `colcon_ros_cargo/task/ament_cargo/build.py`
+  - [ ] Change detection check from `cargo ament-build --help` to `cargo ros2 --version`
+  - [ ] Update error message to recommend `cargo install cargo-ros2`
+  - [ ] Modify `_build_cmd()` to call `cargo ros2 ament-build` instead of `cargo ament-build`
+  - [ ] Ensure all args are forwarded correctly
+  - [ ] Remove cargo-ament-build dependency from setup.cfg
+  - [ ] Add cargo-ros2 to documentation
+- [ ] Update documentation
+  - [ ] README.md with new installation instructions
+  - [ ] Migration guide from original colcon-ros-cargo
+  - [ ] Compatibility notes
 - [ ] Test with existing colcon projects
-- [ ] Submit PR to colcon-ros-cargo
+  - [ ] Test with simple ROS 2 Rust package
+  - [ ] Test with workspace containing multiple packages
+  - [ ] Test with message dependencies
+  - [ ] Verify ament layout is identical
+- [ ] Prepare upstream PR
+  - [ ] Document changes thoroughly
+  - [ ] Include backward compatibility (detect both tools)
+  - [ ] Provide deprecation timeline for cargo-ament-build
+  - [ ] Submit PR to original colcon-ros-cargo
 
 **Acceptance Criteria**:
 ```bash
+# Install modified colcon-ros-cargo + cargo-ros2
+pip install colcon-ros-cargo-v2  # (our fork initially)
+cargo install cargo-ros2
+
+# Standard colcon workflow
 colcon build --packages-select my_rust_pkg
-# Automatically uses cargo-ros2
-# Generates bindings
-# Builds successfully
+# → colcon-ros-cargo detects cargo-ros2
+# → Calls: cargo ros2 ament-build --install-base ...
+# → Generates bindings
+# → Builds package
+# → Installs with ament layout
+# → Success!
+
+# Verify output
+ls install/my_rust_pkg/
+# lib/my_rust_pkg/         ✓ binaries
+# share/my_rust_pkg/rust/  ✓ source
+# share/my_rust_pkg/        ✓ package.xml
+# share/ament_index/       ✓ markers
 ```
 
 #### 3.2: Multi-Distro Support (Week 2)
