@@ -1,52 +1,54 @@
 # cargo-ros2
 
-**Project-Centric ROS 2 Rust Bindings**
+**All-in-One Build Tool for ROS 2 Rust Projects**
 
-A next-generation build tool for ROS 2 Rust projects that solves the circular dependency problem and works seamlessly with system-installed ROS packages.
+A next-generation, unified build tool that solves the circular dependency problem, generates ROS bindings, builds packages, and installs to ament layout - all in one tool.
 
-[![Status](https://img.shields.io/badge/status-design%20phase-yellow)]()
+[![Status](https://img.shields.io/badge/status-design%20phase-orange)]()
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)]()
 
 ---
 
 ## The Problem
 
-Current ROS 2 Rust bindings (ros2_rust) face fundamental issues:
+Current ROS 2 Rust development faces multiple challenges:
 
 1. **Circular Dependency**: Cargo needs bindings before build, but bindings are generated during build
 2. **System Package Incompatibility**: Can't use `apt`-installed ROS packages (they lack Rust bindings)
 3. **Workspace Requirement**: Must use colcon with specific 3-stage build order
-4. **Complex Setup**: Can't build standalone Rust ROS projects
+4. **Tool Fragmentation**: Multiple tools needed (cargo-ament-build, colcon-ros-cargo, custom scripts)
 
 ## The Solution
 
-**cargo-ros2** generates Rust bindings to `target/ros2_bindings/` *before* Cargo's dependency resolution:
+**cargo-ros2** is an all-in-one tool providing three-phase build process:
 
 ```bash
 # Standard Cargo.toml
 [dependencies]
+rclrs = "0.4"
 vision_msgs = "*"    # Works with apt-installed ros-humble-vision-msgs!
 sensor_msgs = "*"
 
-# Just build
-cargo ros2 build
+# Complete build with ament installation
+cargo ros2 ament-build --install-base install/my_robot
 
-# Behind the scenes:
-# 1. Discovers ROS packages via ament_index (finds apt-installed packages)
-# 2. Generates Rust bindings to target/ros2_bindings/
-# 3. Auto-patches .cargo/config.toml
-# 4. Runs cargo build → Success!
+# Behind the scenes (three phases):
+# Phase 1 (Pre-build):  Generate bindings for vision_msgs, sensor_msgs
+# Phase 2 (Build):      cargo build (or check for pure libs)
+# Phase 3 (Post-build): Install to ament layout (binaries, source, markers)
+# → Success!
 ```
 
 ## Key Features
 
-- ✅ **Breaks Circular Dependency**: Bindings exist before Cargo runs
-- ✅ **System Package Support**: Discovers via `ament_index` (works with apt!)
-- ✅ **Standard Cargo Experience**: Normal Cargo.toml, transparent patches
-- ✅ **Project-Isolated**: All artifacts in `target/`, no global state
-- ✅ **Zero Configuration**: User just runs `cargo ros2 build`
-- ✅ **Smart Caching**: Checksum-based incremental generation
-- ✅ **colcon-Friendly**: Drop-in replacement for cargo invocations
+- 🎯 **Solves Circular Dependency**: Bindings exist before Cargo runs
+- 🔧 **All-in-One Tool**: Generates bindings, builds, and installs in one command
+- 📦 **System Package Support**: Discovers via `ament_index` (works with apt!)
+- 🚀 **Project-Isolated**: All artifacts in `target/`, no global state
+- ⚡ **Smart Caching**: Checksum-based incremental generation
+- 🔌 **colcon Integration**: Drop-in replacement for cargo-ament-build
+- ✅ **Standard Cargo**: Normal Cargo.toml dependencies, transparent patches
+- 🛠️ **Zero Configuration**: Just run `cargo ros2 ament-build`
 
 ## Project Status
 
@@ -58,9 +60,14 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed implementation plan.
 
 ## Documentation
 
-- [**CLAUDE.md**](CLAUDE.md) - Project instructions for Claude AI
-- [**docs/DESIGN.md**](docs/DESIGN.md) - Technical design document
-- [**docs/ROADMAP.md**](docs/ROADMAP.md) - Implementation roadmap with phases
+📖 **Start here** (minimalist design docs):
+- **[ARCH.md](docs/ARCH.md)** ⭐ - Architecture overview (two-tool design)
+- **[DESIGN.md](docs/DESIGN.md)** - Implementation details
+- **[ROADMAP.md](docs/ROADMAP.md)** - Phase-by-phase plan
+
+📚 **Additional**:
+- [CLAUDE.md](CLAUDE.md) - Project instructions
+- [docs/archive/](docs/archive/) - Verbose design docs (historical)
 
 ## Quick Example (Future)
 
@@ -105,42 +112,54 @@ my_robot_project/
     └── main.rs
 ```
 
-## Comparison
+## Comparison with Existing Tools
 
-| Feature | cargo-ros2 | ros2_rust | r2r |
-|---------|------------|-----------|-----|
-| **Circular Dep** | ✅ Solved | ❌ Workspace only | ✅ Solved |
-| **System Packages** | ✅ ament_index | ❌ Local build | ✅ ament_index |
-| **Build Speed** | ✅ Cached | ✅ Pre-compiled | ❌ Regenerates all |
-| **Standard Cargo** | ✅ Normal deps | ⚠️ Patches | ❌ No deps |
-| **IDE Support** | ✅ rust-analyzer | ✅ rust-analyzer | ⚠️ OUT_DIR |
+| Feature | cargo-ros2 | ros2_rust | r2r | cargo-ament-build |
+|---------|------------|-----------|-----|-------------------|
+| **Circular Dep** | ✅ Solved | ❌ Workspace only | ✅ Solved | N/A (post-build only) |
+| **System Packages** | ✅ ament_index | ❌ Local build | ✅ ament_index | N/A |
+| **Build Speed** | ✅ Cached | ✅ Pre-compiled | ❌ Regenerates all | ✅ Fast |
+| **Ament Install** | ✅ Built-in | ✅ Via colcon | Manual | ✅ Specialized tool |
+| **Standard Cargo** | ✅ Normal deps | ⚠️ Patches | ❌ No deps | ✅ Normal |
+| **Standalone** | ✅ Yes | ❌ Needs workspace | ✅ Yes | ⚠️ Needs colcon |
+| **IDE Support** | ✅ rust-analyzer | ✅ rust-analyzer | ⚠️ OUT_DIR | N/A |
+
+**Note**: cargo-ros2 **absorbs** cargo-ament-build functionality, becoming a unified tool.
 
 ## Roadmap
 
-### Phase 1: MVP (3-4 weeks)
-- Message type support
+### Phase 1: MVP (Weeks 1-4)
+- Binding generation for messages
 - Basic caching
 - `cargo ros2 build` CLI
 
-### Phase 2: Complete (3-4 weeks)
-- Services & actions
-- Smart caching
-- Performance optimization
+### Phase 2: Complete Feature Set (Weeks 5-9)
+- Services & actions support
+- Smart caching system
+- **Ament installation (absorb cargo-ament-build)**
+- `cargo ros2 ament-build` command
 
-### Phase 3: Production (4-5 weeks)
-- colcon integration
-- Multi-distro support
+### Phase 3: Production (Weeks 10-13)
+- Fork/modify colcon-ros-cargo
+- Multi-distro support (Humble, Iron, Jazzy)
+- IDE integration (rust-analyzer)
 - Public release (0.1.0)
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for details.
+**Timeline**: 12-16 weeks total • See [docs/ROADMAP.md](docs/ROADMAP.md) for details.
 
 ## Installation (Future)
 
 ```bash
+# Install cargo-ros2
 cargo install cargo-ros2
+
+# For colcon integration (Phase 3)
+pip install colcon-ros-cargo-v2  # (our fork, or upstreamed)
 ```
 
 ## Usage (Future)
+
+### Standalone Build
 
 ```bash
 # Create project
@@ -154,11 +173,26 @@ vision_msgs = "*"
 sensor_msgs = "*"
 EOF
 
-# Build (all magic happens here)
-cargo ros2 build
+# Build with ament installation
+cargo ros2 ament-build --install-base install/my_robot
 
-# Run
-cargo ros2 run
+# Verify installation
+ls install/my_robot/
+# lib/my_robot/         ← binaries
+# share/my_robot/rust/  ← source
+# share/ament_index/    ← markers
+```
+
+### colcon Integration
+
+```bash
+# Standard colcon workflow (automatic in Phase 3)
+colcon build --packages-select my_rust_pkg
+
+# Behind the scenes:
+# → colcon-ros-cargo detects cargo-ros2
+# → Invokes: cargo ros2 ament-build --install-base ...
+# → Everything just works!
 ```
 
 ## Requirements
@@ -167,26 +201,51 @@ cargo ros2 run
 - Rust 1.70+
 - Linux or macOS (Windows future support)
 
-## Contributing
-
-(To be added after initial implementation)
-
 ## Related Projects
 
-- [ros2_rust](https://github.com/ros2-rust/ros2_rust) - Official ROS 2 Rust bindings
-- [r2r](https://github.com/sequenceplanner/r2r) - Alternative Rust bindings
-- [colcon-ros-cargo](https://github.com/colcon/colcon-ros-cargo) - Build system integration
+- **[ros2_rust](https://github.com/ros2-rust/ros2_rust)** - Official ROS 2 Rust bindings (workspace-based)
+- **[r2r](https://github.com/sequenceplanner/r2r)** - Alternative Rust bindings (build.rs generation)
+- **[cargo-ament-build](https://github.com/ros2-rust/cargo-ament-build)** - Ament installation tool (**being absorbed into cargo-ros2**)
+- **[colcon-ros-cargo](https://github.com/colcon/colcon-ros-cargo)** - colcon plugin (will be modified to use cargo-ros2)
+
+## Acknowledgments
+
+- **ros2-rust team** - For the current ROS 2 Rust bindings
+- **cargo-ament-build** - Inspiration and code extraction for ament installation
+- **r2r** - Alternative approach to ROS 2 Rust bindings
+- **colcon team** - For the extensible build system
 
 ## License
 
-MIT OR Apache-2.0 (to be decided - compatible with ROS 2 ecosystem)
+This project is licensed under either of:
 
-## Authors
+- MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 
-- **Design Phase**: Anthropic Claude + User collaboration (2025-01)
+at your option.
+
+This dual-licensing approach is compatible with the ROS 2 ecosystem.
+
+## Contributing
+
+**We welcome contributions!** However, please note the project is in the design phase.
+
+### Current Priorities
+
+1. **Feedback on architecture** - Review docs, provide input
+2. **Community engagement** - Share with ros2-rust community
+3. **Testing existing tools** - Help test cargo-ament-build, colcon-ros-cargo
+
+### Future Contributions (Phase 1+)
+
+Once implementation begins:
+- Code contributions (Rust)
+- Testing with real ROS 2 projects
+- Documentation improvements
+- Bug reports and feature requests
 
 ---
 
 **Status**: Design phase complete ✅
 **Next**: Implement Phase 1 MVP
-**Last Updated**: 2025-01-29
+**Last Updated**: 2025-01-30

@@ -1,915 +1,582 @@
-# cargo-ros2: Technical Design Document
+# Design Decisions
 
-**Version**: 1.0
-**Date**: 2025-01-29
-**Status**: Design Phase
+## 1. Tool Architecture
 
-## Table of Contents
+### Decision: Two-Tool Split
 
-1. [Problem Statement](#problem-statement)
-2. [Design Goals](#design-goals)
-3. [Architecture Overview](#architecture-overview)
-4. [Core Components](#core-components)
-5. [Data Flow](#data-flow)
-6. [API Design](#api-design)
-7. [Cache Management](#cache-management)
-8. [Edge Cases & Error Handling](#edge-cases--error-handling)
-9. [Performance Considerations](#performance-considerations)
-10. [Security Considerations](#security-considerations)
-11. [Future Extensions](#future-extensions)
+**Problem**: How to structure the codebase to balance simplicity with modularity?
 
----
+**Alternatives Considered**:
 
-## 1. Problem Statement
+**A. Single Monolithic Tool**
+- All functionality in one binary: `cargo-ros2`
+- Pros:
+  - Simpler to install (one tool)
+  - Easier to coordinate between phases
+  - Single CLI to learn
+- Cons:
+  - Harder to test individual components
+  - Can't use binding generator standalone
+  - Larger binary, slower compile times
+  - Tight coupling between concerns
 
-### 1.1 The Circular Dependency Problem
+**B. Two-Tool Split** ⭐ **CHOSEN**
+- `cargo-ros2-bindgen`: Low-level binding generator
+- `cargo-ros2`: High-level build orchestrator
+- Pros:
+  - Clear separation of concerns
+  - Bindgen can be used standalone (useful for debugging)
+  - Easier to test in isolation
+  - Can parallelize development
+  - Bindgen is reusable by other tools
+- Cons:
+  - Two binaries to install
+  - Need to coordinate versions
+  - More complex release process
 
-ROS 2 Rust bindings face a fundamental chicken-and-egg problem:
+**C. Three-Tool Split**
+- Add separate `cargo-ros2-install` for ament installation
+- Pros:
+  - Even clearer separation
+  - Could make installer optional
+- Cons:
+  - Too much fragmentation
+  - Complicates user experience
+  - Ament installation is core to ROS workflow
 
-```
-1. User writes Cargo.toml:
-   [dependencies]
-   vision_msgs = "*"
+**Decision Rationale**:
+Two tools strike the right balance. The binding generator is a distinct, reusable component that deserves its own tool. Installation is tightly coupled with the build process and doesn't benefit from being separate.
 
-2. Cargo resolves dependencies:
-   - Queries crates.io for vision_msgs
-   - Finds yanked placeholder version
-
-3. .cargo/config.toml patch attempts redirect:
-   [patch.crates-io]
-   vision_msgs = { path = "install/vision_msgs/.../rust" }
-
-4. ERROR: Path doesn't exist yet!
-   - Rust bindings need to be generated first
-   - But generation happens during build
-   - Cargo dependency resolution happens BEFORE build
-   - Circular dependency!
-```
-
-### 1.2 Why Current Solutions Fail
-
-**ros2_rust (official)**:
-- Requires colcon workspace
-- 3-stage build: ros2_rust → interfaces → packages
-- Doesn't work with system-installed ROS packages
-- Complex setup for simple projects
-
-**r2r (alternative)**:
-- Generates in build.rs (avoids circular dep)
-- Regenerates ALL bindings every build (slow)
-- Non-standard API (no Cargo.toml deps)
-- Harder to debug (generated code in OUT_DIR)
-
-### 1.3 Our Solution in One Sentence
-
-**Generate bindings to `target/ros2_bindings/` BEFORE Cargo's dependency resolution, then patch Cargo to use them.**
+**Trade-offs Accepted**:
+- Slightly more complex installation (two binaries)
+- Need to maintain version compatibility between tools
+- Worth it for modularity and testability
 
 ---
 
-## 2. Design Goals
+## 2. Binding Generation Strategy
 
-### 2.1 Primary Goals
+### Decision: Shell Out to Python (MVP)
 
-1. **Break Circular Dependency**: Bindings exist before Cargo resolves deps
-2. **System Package Support**: Discover ROS packages via `ament_index`
-3. **Standard Cargo Experience**: Normal Cargo.toml, transparent patches
-4. **Project Isolation**: All artifacts in `target/`, no global state
-5. **Zero Configuration**: User just runs `cargo ros2 build`
+**Problem**: How to generate Rust bindings from ROS IDL files?
 
-### 2.2 Secondary Goals
+**Alternatives Considered**:
 
-6. **Incremental Builds**: Smart caching (checksum-based)
-7. **colcon Integration**: Drop-in replacement for `cargo build`
-8. **Multi-Distro Support**: Detect ROS_DISTRO, handle version differences
-9. **IDE Compatibility**: Works with rust-analyzer
-10. **Debuggability**: Clear error messages, easy to inspect generated code
+**A. Shell Out to `rosidl_generator_rs` (Python)** ⭐ **CHOSEN (MVP)**
+- Invoke existing Python tool
+- Pros:
+  - Fastest path to MVP (reuse working code)
+  - No need to understand EmPy templates
+  - Proven to work with all ROS distros
+  - Can focus on orchestration first
+  - Lower risk
+- Cons:
+  - Python dependency (but ROS already requires it)
+  - Process spawning overhead (~100ms per package)
+  - Can't customize generation easily
+  - Debugging is harder (crosses language boundary)
 
-### 2.3 Non-Goals (for MVP)
+**B. Native Rust Implementation (from scratch)**
+- Parse .msg/.srv/.action files in Rust
+- Generate code with Rust templates
+- Pros:
+  - No Python dependency
+  - Faster (no process spawning)
+  - Full control over generation
+  - Can optimize for our use case
+  - Pure Rust solution
+- Cons:
+  - 4-6 weeks additional development time
+  - Need to parse ROS IDL format (complex)
+  - Need to replicate rosidl_generator_rs logic
+  - Need to match output format exactly
+  - Higher risk of bugs
+  - Delays MVP
 
-- GUI tools (CLI only)
-- Custom message format support (ROS IDL only)
-- Cross-compilation
-- Windows support (Linux/macOS first)
+**C. FFI to C++ `rosidl_typesupport_introspection`**
+- Use ROS C++ introspection to generate bindings
+- Pros:
+  - No Python dependency
+  - Reuses official ROS code
+- Cons:
+  - C++ FFI is complex
+  - Still process spawning or linking overhead
+  - Introspection may not provide enough info
+  - Unclear if faster than Python approach
 
----
+**Decision Rationale**:
+**MVP uses Python (Option A), Phase 4 switches to native Rust (Option B)**.
 
-## 3. Architecture Overview
+This is pragmatic: get working tool fast, then optimize. Python dependency is acceptable because ROS already requires it. The ~100ms overhead per package is mitigated by caching.
 
-### 3.1 High-Level Flow
+**Trade-offs Accepted**:
+- Python dependency in MVP
+- Some performance overhead
+- Technical debt (need to replace later)
+- Worth it to ship MVP 8+ weeks sooner
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     User invokes:                           │
-│                  $ cargo ros2 build                          │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 1: Pre-Build Analysis                                │
-│  ─────────────────────────                                  │
-│  1. Parse Cargo.toml                                        │
-│  2. Extract ROS dependencies (vision_msgs, sensor_msgs, ...) │
-│  3. Check cache (.ros2_bindgen_cache)                       │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 2: Binding Generation                                │
-│  ────────────────────────                                   │
-│  For each ROS package:                                      │
-│    1. Discover via ament_index                              │
-│    2. Parse .msg/.srv/.action files                         │
-│    3. Generate Rust FFI code                                │
-│    4. Write to target/ros2_bindings/<pkg>/                  │
-│    5. Update cache                                          │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 3: Patch Setup                                       │
-│  ──────────────────                                         │
-│  1. Create/update .cargo/config.toml                        │
-│  2. Add [patch.crates-io] entries                           │
-│  3. Point to target/ros2_bindings/<pkg>/                    │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 4: Build                                             │
-│  ────────────                                               │
-│  1. exec() into cargo build                                 │
-│  2. Cargo resolves deps → patches redirect to local paths   │
-│  3. Compiles successfully!                                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 Component Architecture
-
-```
-cargo-ros2/
-├── cargo-ros2-cli/          # Cargo subcommand binary
-│   └── src/
-│       └── main.rs          # Entry point, CLI parsing
-├── cargo-ros2-core/         # Core library
-│   └── src/
-│       ├── lib.rs
-│       ├── discovery.rs     # ament_index integration
-│       ├── generator.rs     # Binding generation
-│       ├── cache.rs         # Cache management
-│       ├── patcher.rs       # .cargo/config.toml management
-│       └── parser.rs        # ROS IDL parsing
-├── cargo-ros2-codegen/      # Code generation utilities
-│   └── src/
-│       ├── lib.rs
-│       ├── msg.rs           # Message type generation
-│       ├── srv.rs           # Service type generation
-│       ├── action.rs        # Action type generation
-│       └── templates/       # Code templates
-└── tests/
-    ├── integration/         # End-to-end tests
-    └── fixtures/            # Mock ROS packages
-```
+**Open Questions**:
+- Can we optimize the Python invocation? (batch multiple packages?)
+- Should we vendor rosidl_generator_rs to avoid version issues?
 
 ---
 
-## 4. Core Components
+## 3. ROS Dependency Discovery
 
-### 4.1 Discovery Module (`discovery.rs`)
+### Decision: Hybrid Approach
 
-**Purpose**: Locate ROS packages using `ament_index`
+**Problem**: How to identify which Cargo dependencies are ROS interface packages?
 
-```rust
-pub struct PackageDiscovery {
-    ament_prefix_path: Vec<PathBuf>,
-}
+**Alternatives Considered**:
 
-impl PackageDiscovery {
-    pub fn new() -> Result<Self>;
+**A. Heuristic: Check ament_index**
+- For each Cargo dependency, check if it exists in ament_index
+- Pros:
+  - Fully automatic
+  - No user configuration needed
+  - Works with any naming
+- Cons:
+  - False positives (crate name collides with ROS package)
+  - False negatives (renamed packages)
+  - Slower (need to check many packages)
 
-    /// Find a ROS package by name
-    pub fn find_package(&self, name: &str) -> Result<PackageInfo>;
-
-    /// Get all available message packages
-    pub fn list_message_packages(&self) -> Result<Vec<String>>;
-}
-
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    pub path: PathBuf,
-    pub msg_dir: Option<PathBuf>,
-    pub srv_dir: Option<PathBuf>,
-    pub action_dir: Option<PathBuf>,
-    pub dependencies: Vec<String>,
-}
-```
-
-**Implementation Details**:
-- Parse `AMENT_PREFIX_PATH` environment variable
-- Search `<prefix>/share/<package>/` for package.xml
-- Parse package.xml for dependencies
-- Validate ROS_DISTRO compatibility
-
-### 4.2 Generator Module (`generator.rs`)
-
-**Purpose**: Generate Rust crate for each ROS package
-
-```rust
-pub struct BindingGenerator {
-    output_dir: PathBuf,
-    codegen: CodeGenerator,
-}
-
-impl BindingGenerator {
-    pub fn new(output_dir: PathBuf) -> Self;
-
-    /// Generate bindings for a single ROS package
-    pub fn generate(&self, pkg_info: &PackageInfo) -> Result<()>;
-
-    /// Check if regeneration needed (cache miss or stale)
-    pub fn needs_regeneration(&self, pkg_name: &str) -> Result<bool>;
-}
-
-struct GeneratedPackage {
-    cargo_toml: String,      // Package manifest
-    lib_rs: String,          // Public API (pub mod msg/srv/action)
-    msg_mod_rs: String,      // Message implementations
-    srv_mod_rs: String,      // Service implementations
-    action_mod_rs: String,   // Action implementations
-    build_rs: String,        // FFI linking
-}
-```
-
-**Generated Crate Structure**:
-```
-target/ros2_bindings/vision_msgs/
-├── Cargo.toml              # Generated manifest
-├── build.rs                # Links C typesupport libs
-└── src/
-    ├── lib.rs              # pub mod msg; pub mod srv;
-    └── msg/
-        ├── mod.rs          # pub mod detection3d; ...
-        ├── detection3d.rs  # struct Detection3D { ... }
-        └── ...
-```
-
-**Generated Cargo.toml**:
+**B. Explicit Metadata in Cargo.toml**
 ```toml
-[package]
-name = "vision_msgs"
-version = "4.1.0"  # Matches ROS package version
-edition = "2021"
-
-[dependencies]
-# Transitive ROS deps
-std_msgs = "*"
-geometry_msgs = "*"
-sensor_msgs = "*"
-
-[build-dependencies]
-# None needed (linking handled in build.rs)
+[package.metadata.ros2]
+interface_packages = ["std_msgs", "sensor_msgs"]
 ```
+- User lists ROS packages explicitly
+- Pros:
+  - No ambiguity
+  - Fast (no discovery needed)
+  - User controls exactly what's generated
+- Cons:
+  - Manual work for user
+  - Easy to forget to update
+  - Duplicates dependency list
+  - Goes against "zero configuration" goal
 
-**Generated build.rs**:
-```rust
-fn main() {
-    // Link to ROS C typesupport library
-    let ros_distro = std::env::var("ROS_DISTRO").unwrap_or_else(|_| "humble".into());
-    let lib_path = format!("/opt/ros/{}/lib", ros_distro);
+**C. Hybrid: ament_index + package.xml** ⭐ **CHOSEN**
+- Check Cargo deps against ament_index (heuristic)
+- Parse package.xml for transitive deps (explicit)
+- Filter for interface packages (has msg/srv/action)
+- Pros:
+  - Automatic for user
+  - Accurate (transitive deps from package.xml)
+  - Handles ROS package dependencies correctly
+  - Can detect false positives (check for msg/srv/action dirs)
+- Cons:
+  - More complex implementation
+  - Slower than explicit metadata
+  - Edge cases: workspace packages, dev packages
 
-    println!("cargo:rustc-link-search={}", lib_path);
-    println!("cargo:rustc-link-lib=vision_msgs__rosidl_typesupport_c");
+**Decision Rationale**:
+Hybrid approach provides automation with accuracy. The heuristic catches direct dependencies, package.xml provides transitives, and filtering prevents false positives.
 
-    // Re-run if package.xml changes
-    println!("cargo:rerun-if-changed=/opt/ros/{}/share/vision_msgs/package.xml", ros_distro);
-}
-```
+**Trade-offs Accepted**:
+- More complex than either pure approach
+- Slower than explicit metadata (but cached)
+- Edge cases will need handling (workspace packages being developed)
 
-### 4.3 Cache Module (`cache.rs`)
+**Open Questions**:
+- How to handle packages in development (not yet in ament_index)?
+- Should we support an optional override in Cargo.toml metadata?
+- How to handle renamed packages (std_msgs vs std-msgs)?
 
-**Purpose**: Track generated bindings to avoid regeneration
+---
 
-```rust
-pub struct BindingCache {
-    cache_file: PathBuf,  // .ros2_bindgen_cache
-    entries: HashMap<String, CacheEntry>,
-}
+## 4. Caching Strategy
 
-#[derive(Serialize, Deserialize)]
-pub struct CacheEntry {
-    pub package_name: String,
-    pub version: String,
-    pub checksum: String,          // SHA256 of .msg/.srv/.action files
-    pub generated_at: SystemTime,
-    pub ros_distro: String,
-    pub generator_version: String, // cargo-ros2 version
-}
+### Decision: Project-Local Cache
 
-impl BindingCache {
-    pub fn load(project_root: &Path) -> Result<Self>;
-    pub fn save(&self) -> Result<()>;
+**Problem**: How to avoid regenerating bindings unnecessarily?
 
-    /// Check if cached binding is still valid
-    pub fn is_fresh(&self, pkg_info: &PackageInfo) -> bool;
+**Alternatives Considered**:
 
-    /// Update cache after generation
-    pub fn update(&mut self, pkg_name: &str, checksum: &str);
-}
-```
+**A. No Cache (Always Regenerate)**
+- Regenerate all bindings on every build
+- Pros:
+  - Simple implementation
+  - No stale cache issues
+  - Always up-to-date
+- Cons:
+  - Slow (60+ seconds for typical project)
+  - Wasteful (ROS packages rarely change)
+  - Poor developer experience
 
-**Cache Format** (`.ros2_bindgen_cache`):
-```json
-{
-  "version": "1.0",
-  "ros_distro": "humble",
-  "generator_version": "0.1.0",
-  "packages": {
-    "vision_msgs": {
-      "version": "4.1.0",
-      "checksum": "abc123def456...",
-      "generated_at": "2025-01-29T12:34:56Z"
-    },
-    "sensor_msgs": {
-      "version": "4.2.3",
-      "checksum": "def789ghi012...",
-      "generated_at": "2025-01-29T12:34:57Z"
-    }
-  }
-}
-```
+**B. Global Cache (`~/.cache/cargo-ros2/`)**
+- Share bindings across all projects
+- Pros:
+  - Faster for multi-project workflows
+  - Disk space efficient
+  - Similar to cargo's global cache
+- Cons:
+  - Not project-isolated (violates design principle)
+  - Different projects may use different ROS distros
+  - Cache conflicts between versions
+  - Harder to clean (`cargo clean` doesn't work)
+  - Needs global state management
 
-**Invalidation Triggers**:
-- Message definition files changed (different checksum)
-- ROS_DISTRO changed
-- Package version changed
-- cargo-ros2 version changed (generator improvements)
+**C. Project-Local Cache (`.ros2_bindgen_cache`)** ⭐ **CHOSEN**
+- Cache metadata in project root
+- Bindings in `target/ros2_bindings/`
+- Pros:
+  - Project isolation (key design principle)
+  - `cargo clean` removes everything
+  - No conflicts between projects
+  - Survives git operations (in .gitignore)
+  - Simple to reason about
+- Cons:
+  - Duplicates bindings across projects
+  - More disk space (acceptable trade-off)
+  - Cache lost when deleting project
 
-### 4.4 Patcher Module (`patcher.rs`)
+**Decision Rationale**:
+Project isolation is a core design principle. Global cache violates this and creates hard-to-debug issues. Disk space is cheap, developer time is not.
 
-**Purpose**: Manage `.cargo/config.toml` patches
+**Cache Invalidation**:
+- SHA256 checksum of all .msg/.srv/.action files
+- ROS_DISTRO change
+- Package version change (from package.xml)
+- cargo-ros2-bindgen version change
 
-```rust
-pub struct CargoPatcher {
-    config_path: PathBuf,  // .cargo/config.toml
-}
+**Trade-offs Accepted**:
+- More disk usage (~10MB per project for typical dependencies)
+- Bindings regenerated when switching between projects
+- Worth it for isolation and simplicity
 
-impl CargoPatcher {
-    pub fn new(project_root: &Path) -> Self;
+**Open Questions**:
+- Should we support optional global cache for power users?
+- How to handle cache corruption?
+- Should we cache compiled .rlib files too? (probably not - leave to cargo)
 
-    /// Add patches for ROS packages
-    pub fn add_patches(&self, packages: &[String], bindings_dir: &Path) -> Result<()>;
+---
 
-    /// Remove stale patches (packages no longer used)
-    pub fn clean_stale_patches(&self, active_packages: &[String]) -> Result<()>;
+## 5. Cargo Integration Method
 
-    /// Validate existing patches
-    pub fn validate(&self) -> Result<Vec<String>>;  // Returns list of issues
-}
-```
+### Decision: Patch Mechanism
 
-**Generated .cargo/config.toml**:
+**Problem**: How to redirect Cargo dependency resolution to our generated bindings?
+
+**Alternatives Considered**:
+
+**A. Custom Cargo Registry**
+- Create a registry index pointing to target/ros2_bindings/
+- User specifies: `registry = "ros2_rust"`
+- Pros:
+  - Most "proper" Cargo solution
+  - Clear intent in Cargo.toml
+- Cons:
+  - Complex implementation (need registry index format)
+  - Requires maintaining index metadata
+  - Checksum management overhead
+  - Overkill for local redirects
+  - Performance overhead (index parsing)
+
+**B. Path Dependencies**
 ```toml
-# AUTO-GENERATED by cargo-ros2
-# DO NOT EDIT - changes will be overwritten
-# Last updated: 2025-01-29 12:34:56
-
-[patch.crates-io]
-vision_msgs = { path = "target/ros2_bindings/vision_msgs" }
-sensor_msgs = { path = "target/ros2_bindings/sensor_msgs" }
-geometry_msgs = { path = "target/ros2_bindings/geometry_msgs" }
 std_msgs = { path = "target/ros2_bindings/std_msgs" }
 ```
+- Directly specify paths in Cargo.toml
+- Pros:
+  - Simple, obvious
+- Cons:
+  - User must manually edit Cargo.toml
+  - Against "zero configuration" goal
+  - Hard to manage many packages
+  - Conflicts with publishing to crates.io
 
-**Preservation Strategy**:
-- Parse existing config.toml
-- Preserve non-ros2 sections
-- Only update `[patch.crates-io]` entries for ROS packages
-- Add comments for traceability
+**C. [patch.crates-io] in .cargo/config.toml** ⭐ **CHOSEN**
+```toml
+[patch.crates-io]
+std_msgs = { path = "target/ros2_bindings/std_msgs" }
+```
+- Cargo's built-in patching mechanism
+- Pros:
+  - Standard Cargo feature (designed for this)
+  - Transparent to user's Cargo.toml
+  - Works with existing tooling (clippy, rust-analyzer)
+  - Automatic for user (we generate .cargo/config.toml)
+  - Used by major projects (tokio, async-std dev workflow)
+  - Fast (no overhead)
+- Cons:
+  - User can't easily see what's being patched (in .cargo/config.toml, not Cargo.toml)
+  - Patches can be accidentally committed
+  - Less familiar than regular dependencies
+
+**Decision Rationale**:
+Patches are exactly designed for this use case: temporary local redirects during development. It's the simplest standard mechanism that doesn't require custom infrastructure.
+
+**Trade-offs Accepted**:
+- .cargo/config.toml is "hidden" configuration
+- Need to add comments/header to generated file
+- Need to document that .cargo/ should be gitignored (or at least config.toml)
+
+**Open Questions**:
+- Should we warn if .cargo/config.toml is not in .gitignore?
+- How to handle existing user patches in .cargo/config.toml?
+- Should we support reading patches from Cargo.toml too? (in case user wants them tracked)
 
 ---
 
-## 5. Data Flow
+## 6. Installation Strategy
 
-### 5.1 Dependency Extraction
+### Decision: Absorb cargo-ament-build
 
-```rust
-fn extract_ros_dependencies(manifest: &CargoToml) -> Vec<String> {
-    let mut deps = Vec::new();
+**Problem**: How to install built artifacts to ament layout?
 
-    // Check [dependencies]
-    for (name, _spec) in &manifest.dependencies {
-        if is_ros_package(name) {
-            deps.push(name.clone());
-        }
-    }
+**Alternatives Considered**:
 
-    // Check [dev-dependencies]
-    for (name, _spec) in &manifest.dev_dependencies {
-        if is_ros_package(name) {
-            deps.push(name.clone());
-        }
-    }
+**A. Shell Out to cargo-ament-build**
+- Keep cargo-ament-build as separate tool
+- Invoke it from cargo-ros2
+- Pros:
+  - Reuse existing, proven tool
+  - Don't need to maintain installation code
+  - Clear separation: we do bindings, they do installation
+- Cons:
+  - Two tools for user to install
+  - Coordination overhead (version compatibility)
+  - Extra process spawning
+  - Can't provide unified error messages
+  - Fragmented ecosystem
 
-    deps
-}
+**B. Absorb cargo-ament-build Functionality** ⭐ **CHOSEN**
+- Extract installation code into cargo-ros2
+- Deprecate cargo-ament-build
+- Pros:
+  - One tool for users (simpler)
+  - Unified error handling and logging
+  - No version coordination issues
+  - Can optimize full workflow
+  - Cleaner ecosystem (fewer tools)
+  - Better user experience
+- Cons:
+  - More code to maintain (~350 lines)
+  - Need to keep parity with cargo-ament-build
+  - Longer development time (but not much)
+  - Need coordination with ros2-rust maintainers
 
-fn is_ros_package(name: &str) -> bool {
-    // Heuristic: Check if package exists in ament_index
-    ament_index::get_package_share_directory(name).is_ok()
-}
-```
+**C. Separate Installer Tool**
+- Create new cargo-ros2-install
+- Pros:
+  - Optional installation (for non-colcon users)
+  - Modularity
+- Cons:
+  - Three tools (too fragmented)
+  - Installation is core to ROS workflow
+  - Adds complexity without clear benefit
 
-### 5.2 Transitive Dependency Resolution
+**Decision Rationale**:
+Absorbing installation creates a true all-in-one tool. The code is well-contained (~350 lines), easily extracted, and improves UX significantly.
 
-```rust
-fn resolve_transitive_deps(
-    pkg_name: &str,
-    discovery: &PackageDiscovery,
-) -> Result<Vec<String>> {
-    let mut resolved = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back(pkg_name.to_string());
+**Trade-offs Accepted**:
+- More code in cargo-ros2 (but modular)
+- Need to maintain installation logic
+- Need buy-in from ros2-rust community
+- Worth it for unified user experience
 
-    while let Some(current) = queue.pop_front() {
-        if resolved.contains(&current) {
-            continue;
-        }
-
-        let pkg_info = discovery.find_package(&current)?;
-        resolved.insert(current.clone());
-
-        // Add message package dependencies
-        for dep in &pkg_info.dependencies {
-            if is_message_package(dep) {
-                queue.push_back(dep.clone());
-            }
-        }
-    }
-
-    Ok(resolved.into_iter().collect())
-}
-```
-
-### 5.3 Binding Generation Pipeline
-
-```
-.msg file → Parser → AST → Code Generator → Rust file
-
-Example:
-detection3d.msg:
-  Header header
-  BoundingBox3D bbox
-  float32 score
-
-↓ Parse
-
-AST:
-  Message {
-    name: "Detection3D",
-    fields: [
-      Field { name: "header", type: "Header", pkg: "std_msgs" },
-      Field { name: "bbox", type: "BoundingBox3D", pkg: "vision_msgs" },
-      Field { name: "score", type: "f32", primitive: true },
-    ]
-  }
-
-↓ Generate
-
-detection3d.rs:
-  #[repr(C)]
-  pub struct Detection3D {
-      pub header: std_msgs::msg::Header,
-      pub bbox: BoundingBox3D,
-      pub score: f32,
-  }
-
-  impl Default for Detection3D { ... }
-  impl Detection3D {
-      pub fn to_native(&self) -> *mut rcl_detection3d_t { ... }
-      pub fn from_native(ptr: *const rcl_detection3d_t) -> Self { ... }
-  }
-```
+**Migration Path**:
+1. Implement in cargo-ros2 (Phase 2)
+2. Test for parity with cargo-ament-build
+3. Update colcon-ros-cargo to use cargo-ros2
+4. Deprecate cargo-ament-build (with grace period)
+5. Announce on ROS Discourse with migration guide
 
 ---
 
-## 6. API Design
+## 7. Transitive Dependency Handling
 
-### 6.1 CLI Interface
+### Decision: Recursive Discovery via package.xml
 
-```bash
-# Primary command
-cargo ros2 build [OPTIONS]
+**Problem**: How to discover ROS packages that are dependencies of dependencies?
 
-Options:
-  --release              Build in release mode
-  --target <TRIPLE>      Build for target triple
-  --package <SPEC>       Package to build
-  --workspace            Build all workspace members
-  --verbose              Verbose output
-  --no-cache             Ignore cache, regenerate all
-  --bindings-only        Generate bindings only, don't build
+**Example**: User depends on `vision_msgs`, which depends on `sensor_msgs`, which depends on `std_msgs`. How do we find `sensor_msgs` and `std_msgs`?
 
-# Auxiliary commands
-cargo ros2 check           # Fast check (reuses bindings)
-cargo ros2 clean           # Clean target/ including bindings
-cargo ros2 cache --list    # List cached bindings
-cargo ros2 cache --rebuild # Force regeneration
-cargo ros2 info <PACKAGE>  # Show ROS package info
-```
+**Alternatives Considered**:
 
-### 6.2 Library API (for colcon integration)
+**A. User Lists Everything**
+- User must specify all transitive deps in Cargo.toml
+- Pros:
+  - Explicit, no magic
+  - Simple implementation
+- Cons:
+  - Error-prone (easy to forget deps)
+  - Tedious for users
+  - Against zero-configuration goal
 
-```rust
-// Public API for colcon-ros-cargo plugin
-pub struct Ros2Builder {
-    project_root: PathBuf,
-    config: BuildConfig,
-}
+**B. Parse Cargo.lock**
+- Run `cargo metadata` to get resolved dependency tree
+- Find ROS packages in the tree
+- Pros:
+  - Accurate (Cargo's resolution)
+  - Handles complex scenarios
+- Cons:
+  - Chicken-and-egg: Cargo.lock doesn't exist until first build
+  - Doesn't help with circular dependency problem
+  - May include dev-dependencies unnecessarily
 
-pub struct BuildConfig {
-    pub release: bool,
-    pub target: Option<String>,
-    pub no_cache: bool,
-    pub verbose: bool,
-}
+**C. Recursive package.xml Traversal** ⭐ **CHOSEN**
+- Parse package.xml for each discovered ROS package
+- Extract `<depend>`, `<build_depend>`, `<exec_depend>`
+- Recursively discover deps of deps
+- Filter for interface packages
+- Pros:
+  - Matches ROS dependency model
+  - Works before Cargo resolution
+  - Solves circular dependency problem
+  - Accurate for ROS ecosystem
+- Cons:
+  - Need XML parsing
+  - Slower (filesystem ops)
+  - Must handle cycles in dependency graph
 
-impl Ros2Builder {
-    pub fn new(project_root: PathBuf) -> Result<Self>;
-    pub fn with_config(config: BuildConfig) -> Self;
+**Decision Rationale**:
+ROS package dependencies are explicitly declared in package.xml. This is the authoritative source for ROS deps, and using it ensures we discover everything needed.
 
-    /// Pre-build: Generate bindings
-    pub fn prepare(&self) -> Result<()>;
+**Trade-offs Accepted**:
+- Need XML parsing (add dependency: quick-xml)
+- Filesystem overhead (mitigated by caching)
+- Must detect and handle cycles
 
-    /// Build: Invoke cargo
-    pub fn build(&self) -> Result<()>;
-
-    /// Complete workflow
-    pub fn run(&self) -> Result<()> {
-        self.prepare()?;
-        self.build()
-    }
-}
-```
-
----
-
-## 7. Cache Management
-
-### 7.1 Checksum Calculation
-
-```rust
-fn calculate_package_checksum(pkg_info: &PackageInfo) -> Result<String> {
-    let mut hasher = Sha256::new();
-
-    // Hash all .msg files
-    if let Some(msg_dir) = &pkg_info.msg_dir {
-        for entry in fs::read_dir(msg_dir)? {
-            let path = entry?.path();
-            if path.extension() == Some("msg") {
-                let content = fs::read(&path)?;
-                hasher.update(&content);
-            }
-        }
-    }
-
-    // Hash all .srv files
-    // ... similar for srv_dir
-
-    // Hash all .action files
-    // ... similar for action_dir
-
-    // Hash package version
-    hasher.update(pkg_info.version.as_bytes());
-
-    Ok(format!("{:x}", hasher.finalize()))
-}
-```
-
-### 7.2 Cache Invalidation Strategy
-
-**Invalidate when**:
-1. Checksum mismatch (source files changed)
-2. ROS_DISTRO changed
-3. Package version changed
-4. Generator version changed (cargo-ros2 updated)
-5. Manual `--no-cache` flag
-
-**Retain when**:
-- Cargo.toml dependencies added/removed (only affects which packages are generated)
-- User code changes (bindings unchanged)
-- Build artifacts cleaned (`cargo clean` preserves bindings by default)
-
-### 7.3 Cache Storage Location
-
-```
-# Option A: Project-local (chosen)
-.ros2_bindgen_cache
-
-# Option B: Global cache (rejected - not project-isolated)
-~/.cache/cargo-ros2/
-
-# Reasoning:
-# - Project-local ensures isolation
-# - Different projects can use different ROS versions
-# - Survives git operations (in .gitignore)
-# - Cleaned with `cargo ros2 clean`
-```
+**Open Questions**:
+- Should we cache the transitive dep graph?
+- How to handle build vs exec dependencies? (probably generate both)
+- What about test dependencies? (probably skip for MVP)
 
 ---
 
-## 8. Edge Cases & Error Handling
+## 8. Comparison with Alternatives
 
-### 8.1 Missing ROS Installation
+### vs. ros2_rust (Official Bindings)
 
-**Scenario**: User hasn't sourced ROS setup.bash
+**Their Approach**:
+- Workspace-required, colcon-driven build
+- Three-stage: build ros2_rust → build interfaces → build packages
+- Bindings in install/*/share/*/rust/
+- Patches point to install directories
 
-```
-Error: ROS 2 not found
-  ├─ AMENT_PREFIX_PATH is not set
-  ├─ Please source your ROS 2 installation:
-  │    $ source /opt/ros/humble/setup.bash
-  └─ Or set AMENT_PREFIX_PATH manually
-```
+**Our Approach**:
+- Project-local, Cargo-native
+- Generate bindings to target/ before Cargo runs
+- Works with system-installed ROS packages
+- No workspace requirement
 
-**Detection**:
-```rust
-fn check_ros_environment() -> Result<()> {
-    if std::env::var("AMENT_PREFIX_PATH").is_err() {
-        return Err(Error::RosNotFound);
-    }
-    Ok(())
-}
-```
+**Why Different?**
+- ros2_rust optimizes for colcon ecosystem integration
+- We optimize for Cargo ecosystem integration
+- Their circular dependency still exists (patches point to future locations)
+- We break it (generate before Cargo resolution)
 
-### 8.2 Package Not Found
-
-**Scenario**: User depends on non-existent package
-
-```
-Error: ROS package 'my_custom_msgs' not found
-  ├─ Searched in AMENT_PREFIX_PATH:
-  │    - /opt/ros/humble
-  │    - /home/user/ros2_ws/install
-  ├─ Did you forget to source the workspace?
-  └─ Or install the package?
-```
-
-### 8.3 Conflicting ROS Distros
-
-**Scenario**: Workspace uses Humble, system has Iron
-
-```
-Warning: Multiple ROS distributions detected
-  ├─ Workspace: humble (from .ros2_bindgen_cache)
-  ├─ Current:   iron (from ROS_DISTRO)
-  ├─ This may cause binary incompatibilities
-  └─ Recommendation: Source the same distro or clean cache
-```
-
-### 8.4 Stale Patches
-
-**Scenario**: .cargo/config.toml has patches but bindings were deleted
-
-```
-Error: Stale patch detected
-  ├─ Package: vision_msgs
-  ├─ Patch points to: target/ros2_bindings/vision_msgs
-  ├─ But path doesn't exist
-  └─ Run: cargo ros2 cache --rebuild
-```
-
-### 8.5 Circular Message Dependencies
-
-**Scenario**: msg_a.msg references msg_b.msg, msg_b.msg references msg_a.msg
-
-```
-Error: Circular dependency detected
-  ├─ Cycle: my_pkg::MsgA → my_pkg::MsgB → my_pkg::MsgA
-  └─ ROS message definitions should form a DAG
-```
-
-**Handling**: Detect cycles during dependency resolution, report error with cycle path.
+**When to use ros2_rust**: When working in large colcon workspace with many ROS packages
+**When to use cargo-ros2**: When working in Cargo-centric workflow, or with system ROS packages
 
 ---
 
-## 9. Performance Considerations
+### vs. r2r
 
-### 9.1 Binding Generation Cost
+**Their Approach**:
+- Generate bindings in build.rs
+- All generation happens during Cargo build
+- No dependency on rosidl_generator_rs
+- Uses C++ introspection
 
-**Benchmarks** (estimated, to be validated):
-- Parse 1 .msg file: ~100μs
-- Generate 1 Rust struct: ~500μs
-- Compile 1 binding crate: ~2s (debug), ~5s (release)
+**Our Approach**:
+- Generate bindings before Cargo build
+- Cache bindings between builds
+- Reuse rosidl_generator_rs (MVP)
 
-**Total for typical project**:
-- 20 ROS packages × 2s = 40s one-time cost
-- Subsequent builds: 0s (cached)
+**Why Different?**:
+- build.rs generation happens every `cargo build` (slower)
+- build.rs can't easily cache across builds
+- build.rs runs after dependency resolution (can't solve circular dep cleanly)
 
-### 9.2 Optimization Strategies
-
-1. **Parallel Generation**: Generate multiple packages concurrently
-   ```rust
-   use rayon::prelude::*;
-
-   packages.par_iter().for_each(|pkg| {
-       generator.generate(pkg).unwrap();
-   });
-   ```
-
-2. **Incremental Compilation**: Pre-compile bindings to .rlib files
-   ```bash
-   cd target/ros2_bindings/vision_msgs
-   cargo build --release  # Creates .rlib
-   ```
-
-3. **Lazy Loading**: Only generate packages actually imported in user code
-   (Future optimization)
-
-### 9.3 Cache Hit Rate
-
-**Target**: >95% cache hits in typical development workflow
-
-**Analysis**:
-- Message definitions change rarely (stable across months)
-- Generator version updates infrequent (quarterly releases)
-- ROS distro changes rare (annual upgrades)
-
-**Expected performance**: Cold build: 60s, Hot build: 5s (10x improvement)
+**Trade-off**:
+- r2r is simpler (one tool, standard build.rs)
+- We're faster (caching) and more flexible (pre-build generation)
 
 ---
 
-## 10. Security Considerations
+### vs. cargo-ament-build
 
-### 10.1 Path Injection
+**Their Approach**:
+- Post-build only (installation)
+- Assumes bindings already exist
+- Focused, single-purpose tool
 
-**Risk**: Malicious .cargo/config.toml with arbitrary paths
+**Our Approach**:
+- Full workflow (generate → build → install)
+- Absorb their installation functionality
+- All-in-one solution
 
-**Mitigation**:
-- Validate all paths are within `target/ros2_bindings/`
-- Reject absolute paths outside project
-- Sanitize package names (alphanumeric + underscore only)
-
-```rust
-fn validate_binding_path(path: &Path, project_root: &Path) -> Result<()> {
-    let canonical = path.canonicalize()?;
-    let bindings_dir = project_root.join("target/ros2_bindings");
-
-    if !canonical.starts_with(&bindings_dir) {
-        return Err(Error::InvalidPath);
-    }
-
-    Ok(())
-}
-```
-
-### 10.2 Code Injection
-
-**Risk**: Malicious .msg file with shell commands
-
-**Mitigation**:
-- Parse .msg files with strict grammar (no shell execution)
-- Use safe code generation (no format! with user input)
-- Validate all identifiers match Rust syntax
-
-```rust
-fn validate_identifier(name: &str) -> Result<()> {
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(Error::InvalidIdentifier);
-    }
-    Ok(())
-}
-```
-
-### 10.3 Supply Chain
-
-**Risk**: Compromised ROS packages
-
-**Mitigation**:
-- Checksum verification against known-good values (future)
-- Signature verification (if ROS adds signing)
-- Audit logging of generated code
+**Why Different?**:
+- They solved one problem (installation)
+- We solve end-to-end workflow
+- Better UX with unified tool
 
 ---
 
-## 11. Future Extensions
+## 9. Open Design Questions
 
-### 11.1 IDE Integration
+Questions to resolve during implementation:
 
-**Goal**: rust-analyzer understands ROS packages
+### Workspace vs Single Package
+- How to detect if we're in a Cargo workspace?
+- Should we generate bindings at workspace root or per-package?
+- How to share bindings across workspace members?
 
-**Challenge**: Generated code in `target/` not visible to IDEs
+**Leaning toward**: Generate at workspace root if detected, else project root
 
-**Solution**:
-```rust
-// Generate rust-project.json for rust-analyzer
-{
-  "sysroot_src": "...",
-  "crates": [
-    {
-      "root_module": "target/ros2_bindings/vision_msgs/src/lib.rs",
-      "edition": "2021",
-      "deps": [...]
-    }
-  ]
-}
-```
+### Custom Message Packages in Development
+- How to handle local interface packages not yet in ament_index?
+- Should we support path-based discovery?
 
-### 11.2 Custom Message Formats
+**Leaning toward**: Add optional `--local-package <path>` flag
 
-**Goal**: Support non-ROS message formats (Protobuf, FlatBuffers)
+### ROS Distro Conflicts
+- What if AMENT_PREFIX_PATH has multiple distros?
+- Should we error, warn, or auto-detect?
 
-**Design**:
-```rust
-trait MessageFormat {
-    fn parse(&self, file: &Path) -> Result<Ast>;
-    fn generate(&self, ast: &Ast) -> Result<String>;
-}
+**Leaning toward**: Detect ROS_DISTRO env var, warn on conflicts
 
-struct RosIdlFormat;
-struct ProtobufFormat;
-struct FlatBuffersFormat;
-```
+### Generated Code Customization
+- Should we support customizing generated code? (e.g., add derives, change visibility)
+- How to make it extensible?
 
-### 11.3 Cross-Compilation
+**Leaning toward**: Not in MVP, consider plugin system in Phase 4
 
-**Goal**: Build for embedded targets (ARM, RISC-V)
+### Performance Targets
+- What's acceptable for cold build? 60s? 120s?
+- What's acceptable for hot build (cache hit)? 5s? 10s?
 
-**Challenges**:
-- C typesupport libraries need cross-compilation
-- ament_index may not work on target
-
-**Solution**:
-- Bundle pre-compiled typesupport for common targets
-- Allow specifying alternate AMENT_PREFIX_PATH for target
-
-### 11.4 Hot Reload
-
-**Goal**: Regenerate bindings on .msg file changes without restart
-
-**Design**:
-- Watch mode: `cargo ros2 watch`
-- File system watcher on `ament_index` paths
-- Incremental regeneration on change
-- Trigger `cargo check` automatically
+**Leaning toward**: <60s cold, <5s hot (matches cargo-ament-build)
 
 ---
 
-## Appendix A: Comparison with Alternatives
+## 10. Future Evolution
 
-| Feature | cargo-ros2 | ros2_rust | r2r |
-|---------|------------|-----------|-----|
-| **Circular Dep** | ✅ Solved | ❌ Requires workspace | ✅ Solved |
-| **System Packages** | ✅ ament_index | ❌ Needs local build | ✅ ament_index |
-| **Build Speed** | ✅ Cached | ✅ Pre-compiled | ❌ Regenerates all |
-| **Standard Cargo** | ✅ Normal deps | ⚠️ Patches | ❌ No Cargo.toml deps |
-| **IDE Support** | ✅ rust-analyzer | ✅ rust-analyzer | ⚠️ Generated in OUT_DIR |
-| **colcon Integration** | ✅ Drop-in | ✅ Native | ⚠️ Manual |
-| **Maintenance** | 🆕 New | ✅ Official | ✅ Active |
+### Phase 4: Native Rust Generator
+When we replace Python generation:
+- Will we match rosidl_generator_rs output exactly?
+- Or take opportunity to improve generated code?
+- How to handle migration? (both generators supported for a period?)
 
----
+**Leaning toward**: Exact match initially, improvements later with feature flag
 
-## Appendix B: Message Format Examples
+### Cross-Compilation
+Not in MVP, but considerations:
+- Need cross-compiled typesupport libraries
+- May need separate AMENT_PREFIX_PATH for target
+- Bindgen would need to know target triple
 
-### Input: .msg file
-```
-# vision_msgs/Detection3D.msg
-std_msgs/Header header
-BoundingBox3D bbox
-float32 score
-string class_id
-```
+### IDE Integration
+rust-analyzer needs to see generated code:
+- Should we generate rust-project.json?
+- Or rely on .cargo/config.toml patches being enough?
 
-### Output: Rust struct
-```rust
-// target/ros2_bindings/vision_msgs/src/msg/detection3d.rs
-#[repr(C)]
-#[derive(Debug, Clone, PartialEq)]
-pub struct Detection3D {
-    pub header: std_msgs::msg::Header,
-    pub bbox: super::BoundingBox3D,
-    pub score: f32,
-    pub class_id: String,
-}
-
-impl Default for Detection3D {
-    fn default() -> Self {
-        Self {
-            header: Default::default(),
-            bbox: Default::default(),
-            score: 0.0,
-            class_id: String::new(),
-        }
-    }
-}
-
-// FFI bindings to C typesupport
-extern "C" {
-    fn vision_msgs__msg__Detection3D__init(msg: *mut Detection3D) -> bool;
-    fn vision_msgs__msg__Detection3D__fini(msg: *mut Detection3D);
-    // ... more FFI functions
-}
-```
+**Leaning toward**: Patches should be sufficient, test and document
 
 ---
 
-**End of Design Document**
+**Status**: Design decisions documented
+**Last Updated**: 2025-01-30
