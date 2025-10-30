@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "cargo-ros2",
+    "cargo-ros2-bindgen",
+    "rosidl-parser",
+    "rosidl-codegen",
+    "rosidl-runtime-rs",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["cargo-ros2 contributors"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aeon-toolkit/cargo-ros2"
+
+[profile.dev-release]
+inherits = "release"
+debug-assertions = true
+debug = true
