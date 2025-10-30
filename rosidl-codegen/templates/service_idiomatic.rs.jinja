@@ -1,0 +1,117 @@
+// Idiomatic Rust layer - user-friendly types
+// Package: {{ package_name }}
+// Service: {{ service_name }}
+
+use serde::{Deserialize, Serialize};
+
+// Request message
+pub mod request {
+    use super::*;
+
+    {% for constant in request_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ service_name }}Request {
+        {% for field in request_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ service_name }}Request {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ service_name }}Request {
+        fn default() -> Self {
+            Self {
+                {% for field in request_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion from RMW layer
+    impl From<crate::srv::rmw::request::{{ service_name }}Request> for {{ service_name }}Request {
+        fn from(rmw: crate::srv::rmw::request::{{ service_name }}Request) -> Self {
+            Self {
+                {% for field in request_fields %}
+                {{ field.name }}: rmw.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion to RMW layer
+    impl From<{{ service_name }}Request> for crate::srv::rmw::request::{{ service_name }}Request {
+        fn from(idiomatic: {{ service_name }}Request) -> Self {
+            Self {
+                {% for field in request_fields %}
+                {{ field.name }}: idiomatic.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Response message
+pub mod response {
+    use super::*;
+
+    {% for constant in response_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ service_name }}Response {
+        {% for field in response_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ service_name }}Response {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ service_name }}Response {
+        fn default() -> Self {
+            Self {
+                {% for field in response_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion from RMW layer
+    impl From<crate::srv::rmw::response::{{ service_name }}Response> for {{ service_name }}Response {
+        fn from(rmw: crate::srv::rmw::response::{{ service_name }}Response) -> Self {
+            Self {
+                {% for field in response_fields %}
+                {{ field.name }}: rmw.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion to RMW layer
+    impl From<{{ service_name }}Response> for crate::srv::rmw::response::{{ service_name }}Response {
+        fn from(idiomatic: {{ service_name }}Response) -> Self {
+            Self {
+                {% for field in response_fields %}
+                {{ field.name }}: idiomatic.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Re-export for convenience
+pub use request::{{ service_name }}Request;
+pub use response::{{ service_name }}Response;

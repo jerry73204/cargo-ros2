@@ -1,0 +1,75 @@
+// RMW (ROS Middleware) layer - C-compatible FFI types
+// Package: {{ package_name }}
+// Service: {{ service_name }}
+
+use serde::{Deserialize, Serialize};
+
+// Request message
+pub mod request {
+    use super::*;
+
+    {% for constant in request_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[repr(C)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ service_name }}Request {
+        {% for field in request_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ service_name }}Request {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ service_name }}Request {
+        fn default() -> Self {
+            Self {
+                {% for field in request_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Response message
+pub mod response {
+    use super::*;
+
+    {% for constant in response_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[repr(C)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ service_name }}Response {
+        {% for field in response_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ service_name }}Response {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ service_name }}Response {
+        fn default() -> Self {
+            Self {
+                {% for field in response_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Re-export for convenience
+pub use request::{{ service_name }}Request;
+pub use response::{{ service_name }}Response;

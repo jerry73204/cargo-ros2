@@ -1,0 +1,172 @@
+// Idiomatic Rust layer - user-friendly types
+// Package: {{ package_name }}
+// Action: {{ action_name }}
+
+use serde::{Deserialize, Serialize};
+
+// Goal message
+pub mod goal {
+    use super::*;
+
+    {% for constant in goal_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ action_name }}Goal {
+        {% for field in goal_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ action_name }}Goal {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ action_name }}Goal {
+        fn default() -> Self {
+            Self {
+                {% for field in goal_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion from RMW layer
+    impl From<crate::action::rmw::goal::{{ action_name }}Goal> for {{ action_name }}Goal {
+        fn from(rmw: crate::action::rmw::goal::{{ action_name }}Goal) -> Self {
+            Self {
+                {% for field in goal_fields %}
+                {{ field.name }}: rmw.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion to RMW layer
+    impl From<{{ action_name }}Goal> for crate::action::rmw::goal::{{ action_name }}Goal {
+        fn from(idiomatic: {{ action_name }}Goal) -> Self {
+            Self {
+                {% for field in goal_fields %}
+                {{ field.name }}: idiomatic.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Result message
+pub mod result {
+    use super::*;
+
+    {% for constant in result_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ action_name }}Result {
+        {% for field in result_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ action_name }}Result {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ action_name }}Result {
+        fn default() -> Self {
+            Self {
+                {% for field in result_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion from RMW layer
+    impl From<crate::action::rmw::result::{{ action_name }}Result> for {{ action_name }}Result {
+        fn from(rmw: crate::action::rmw::result::{{ action_name }}Result) -> Self {
+            Self {
+                {% for field in result_fields %}
+                {{ field.name }}: rmw.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion to RMW layer
+    impl From<{{ action_name }}Result> for crate::action::rmw::result::{{ action_name }}Result {
+        fn from(idiomatic: {{ action_name }}Result) -> Self {
+            Self {
+                {% for field in result_fields %}
+                {{ field.name }}: idiomatic.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Feedback message
+pub mod feedback {
+    use super::*;
+
+    {% for constant in feedback_constants %}
+    pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+    {% endfor %}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct {{ action_name }}Feedback {
+        {% for field in feedback_fields %}
+        pub {{ field.name }}: {{ field.rust_type }},
+        {% endfor %}
+    }
+
+    impl {{ action_name }}Feedback {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for {{ action_name }}Feedback {
+        fn default() -> Self {
+            Self {
+                {% for field in feedback_fields %}
+                {{ field.name }}: Default::default(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion from RMW layer
+    impl From<crate::action::rmw::feedback::{{ action_name }}Feedback> for {{ action_name }}Feedback {
+        fn from(rmw: crate::action::rmw::feedback::{{ action_name }}Feedback) -> Self {
+            Self {
+                {% for field in feedback_fields %}
+                {{ field.name }}: rmw.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+
+    // Conversion to RMW layer
+    impl From<{{ action_name }}Feedback> for crate::action::rmw::feedback::{{ action_name }}Feedback {
+        fn from(idiomatic: {{ action_name }}Feedback) -> Self {
+            Self {
+                {% for field in feedback_fields %}
+                {{ field.name }}: idiomatic.{{ field.name }}.into(),
+                {% endfor %}
+            }
+        }
+    }
+}
+
+// Re-export for convenience
+pub use goal::{{ action_name }}Goal;
+pub use result::{{ action_name }}Result;
+pub use feedback::{{ action_name }}Feedback;

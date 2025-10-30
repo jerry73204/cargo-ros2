@@ -3,7 +3,10 @@ pub mod templates;
 pub mod types;
 pub mod utils;
 
-pub use generator::{generate_message_package, GeneratedPackage, GeneratorError};
+pub use generator::{
+    generate_action_package, generate_message_package, generate_service_package,
+    GeneratedActionPackage, GeneratedPackage, GeneratedServicePackage, GeneratorError,
+};
 pub use types::{escape_keyword, rust_type_for_field};
 
 #[cfg(test)]
