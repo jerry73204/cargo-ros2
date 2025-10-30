@@ -1,264 +1,659 @@
 # Roadmap
 
-## Phase 1: MVP (4 weeks)
+## Phase 0: Project Preparation
 
-**Goal**: Generate Rust bindings for ROS messages and build projects.
+**Goal**: Set up project structure, tooling, and development infrastructure.
 
-### Week 1-2: cargo-ros2-bindgen
+**Duration**: 1 week
 
-- [ ] Project setup
-  - [ ] Create cargo-ros2-bindgen crate
-  - [ ] Add dependencies (clap, anyhow, serde_json)
-  - [ ] Set up CI (fmt, clippy, test)
+### Subphase 0.1: Workspace Setup (3 days)
+
+- [ ] Cargo workspace
+  - [ ] Create workspace root with Cargo.toml
+  - [ ] Set up crate structure:
+    - [ ] `cargo-ros2/` - Main CLI tool
+    - [ ] `cargo-ros2-bindgen/` - Binding generator CLI
+    - [ ] `rosidl-parser/` - IDL parser library
+    - [ ] `rosidl-codegen/` - Code generator library
+    - [ ] `rosidl-runtime-rs/` - Runtime support library
+  - [ ] Configure workspace Cargo.toml with members
+  - [ ] Set up .gitignore (target/, .ros2_bindgen_cache, etc.)
+
+- [ ] Cargo profiles
+  - [ ] Add `dev-release` profile in workspace Cargo.toml
+  - [ ] Inherit from release profile
+  - [ ] Enable debug assertions (`debug-assertions = true`)
+  - [ ] Enable debug info (`debug = true`)
+  - [ ] Profile used for testing and linting
+
+- [ ] Makefile (minimalist style)
+  - [ ] Each non-file target preceded by `.PHONY`
+  - [ ] `make build` - Build with dev-release profile
+  - [ ] `make test` - Run `cargo nextest run --no-fail-fast --cargo-profile dev-release`
+  - [ ] `make clean` - Clean all artifacts
+  - [ ] `make format` - Run `cargo +nightly fmt`
+  - [ ] `make lint` - Run `cargo clippy --profile dev-release -- -D warnings`
+  - [ ] `make check` - Run `cargo check --profile dev-release`
+  - [ ] `make doc` - Generate documentation
+  - [ ] `make install` - Install binaries
+
+- [ ] Testing
+  - [ ] Run `make format && make lint` to verify code quality
+  - [ ] Verify all Makefile targets work
+  - [ ] Test workspace builds with dev-release profile
+
+**Acceptance**:
+```bash
+make build              # All crates compile with dev-release
+make format && make lint  # Code is formatted and passes clippy
+make test               # All tests pass with nextest
+```
+
+### Subphase 0.2: Documentation Setup (2 days)
+
+- [ ] Documentation structure
+  - [ ] Update README.md
+  - [ ] Create CONTRIBUTING.md
+  - [ ] Add Code of Conduct
+  - [ ] Create issue templates
+
+- [ ] Testing
+  - [ ] Verify documentation renders correctly
+  - [ ] Check all links work
+
+**Acceptance**:
+- Documentation is complete and renders correctly
+
+### Subphase 0.3: Dependencies & Tooling (2 days)
+
+- [ ] Add core dependencies
+  - [ ] clap (CLI parsing)
+  - [ ] eyre (error handling)
+  - [ ] serde, serde_json (serialization)
+  - [ ] cargo-manifest (Cargo.toml parsing)
+  - [ ] toml (config file handling)
+  - [ ] sha2 (caching checksums)
+
+- [ ] Development tools
+  - [ ] Install cargo-nextest (required for testing)
+  - [ ] Install Rust nightly (required for formatting)
+  - [ ] cargo-watch (optional, for development)
+  - [ ] cargo-deny (dependency checks)
+
+- [ ] Testing
+  - [ ] Verify all dependencies compile
+  - [ ] Run `make test` with cargo-nextest
+  - [ ] Run `make format && make lint` successfully
+
+---
+
+## Phase 1: Native Rust IDL Generator
+
+**Goal**: Implement pure Rust parser and code generator for ROS IDL files (.msg, .srv, .action).
+
+**Duration**: 4 weeks
+
+### Subphase 1.1: IDL Parser - Messages (2 weeks)
+
+- [ ] Lexer
+  - [ ] Tokenize .msg files
+  - [ ] Handle comments
+  - [ ] Parse field types (primitives, arrays, bounded strings)
+  - [ ] Parse constants
+
+- [ ] Parser
+  - [ ] Build AST for .msg files
+  - [ ] Type resolution (built-in types)
+  - [ ] Dependency resolution (other message types)
+  - [ ] Validation (field names, types)
+
+- [ ] Unit tests
+  - [ ] Test lexer with various .msg formats
+  - [ ] Test parser with std_msgs examples
+  - [ ] Test error handling (invalid syntax)
+  - [ ] Test edge cases (empty messages, comments)
+
+- [ ] Integration tests
+  - [ ] Parse all std_msgs files
+  - [ ] Verify AST correctness
+  - [ ] Compare with rosidl_generator_rs behavior
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-parser
+# → All std_msgs/*.msg files parse correctly
+```
+
+### Subphase 1.2: Code Generator - Messages (2 weeks)
+
+- [ ] Template system
+  - [ ] Design template format (or use tera/askama)
+  - [ ] Port msg.rs.em logic to Rust templates
+  - [ ] Generate struct definitions
+  - [ ] Generate serialization/deserialization code
+  - [ ] Generate trait implementations (Default, Debug, Clone)
+
+- [ ] Cargo.toml generation
+  - [ ] Generate package manifest
+  - [ ] Add dependencies (rosidl_runtime_rs)
+  - [ ] Handle transitive deps
+
+- [ ] build.rs generation
+  - [ ] Link ROS typesupport libraries
+  - [ ] Handle pkg-config integration
+
+- [ ] Unit tests
+  - [ ] Test code generation for simple messages
+  - [ ] Test generated code compiles
+  - [ ] Test generated code has correct API
+  - [ ] Test serialization round-trips
+
+- [ ] Integration tests
+  - [ ] Generate bindings for std_msgs
+  - [ ] Compile generated code
+  - [ ] Compare output with rosidl_generator_rs
+  - [ ] Test FFI compatibility
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-codegen
+# → Generates std_msgs bindings
+# → Generated code compiles
+# → API matches rosidl_generator_rs output
+```
+
+### Subphase 1.3: Services & Actions Support (1 week)
+
+- [ ] Service parser
+  - [ ] Parse .srv files (request/response)
+  - [ ] Handle embedded message definitions
+  - [ ] Validate service structure
+
+- [ ] Action parser
+  - [ ] Parse .action files (goal/result/feedback)
+  - [ ] Handle three-part structure
+
+- [ ] Code generation
+  - [ ] Generate service types
+  - [ ] Generate action types
+  - [ ] Generate client/server stubs
+
+- [ ] Unit tests
+  - [ ] Test .srv parsing
+  - [ ] Test .action parsing
+  - [ ] Test generated service code
+  - [ ] Test generated action code
+
+- [ ] Integration tests
+  - [ ] Generate example_interfaces services
+  - [ ] Generate action_msgs actions
+  - [ ] Verify generated code compiles
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-codegen -- services
+cargo test --package rosidl-codegen -- actions
+# → All service/action types generate correctly
+```
+
+### Subphase 1.4: Parity Testing (1 week)
+
+- [ ] Comprehensive parity tests
+  - [ ] Compare output with rosidl_generator_rs for all ROS packages
+  - [ ] Test with common_interfaces (std_msgs, sensor_msgs, geometry_msgs, etc.)
+  - [ ] Test with action_msgs, example_interfaces
+  - [ ] Document any intentional differences
+
+- [ ] Performance testing
+  - [ ] Benchmark generation speed vs Python generator
+  - [ ] Profile and optimize hot paths
+  - [ ] Target: ≥2x faster than Python
+
+- [ ] Edge case testing
+  - [ ] Test with complex nested messages
+  - [ ] Test with large arrays
+  - [ ] Test with unusual naming
+  - [ ] Test with Unicode in comments
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-codegen -- parity
+# → All common_interfaces packages generate identical API
+# → Generation is ≥2x faster than rosidl_generator_rs
+```
+
+---
+
+## Phase 2: cargo-ros2 Tools
+
+**Goal**: Build cargo-ros2-bindgen and cargo-ros2 tools using native generator.
+
+**Duration**: 4 weeks
+
+### Subphase 2.1: cargo-ros2-bindgen (2 weeks)
 
 - [ ] Ament index integration
   - [ ] Parse AMENT_PREFIX_PATH
   - [ ] Implement package discovery
   - [ ] Find package share directories
+  - [ ] Locate .msg/.srv/.action files
 
-- [ ] Python generator invocation
-  - [ ] Shell out to `rosidl_generator_rs`
-  - [ ] Pass correct arguments
-  - [ ] Handle errors
+- [ ] Generator integration
+  - [ ] Invoke native Rust generator
+  - [ ] Handle package dependencies
+  - [ ] Generate output to specified directory
+  - [ ] Post-process generated files
 
-- [ ] Post-processing
-  - [ ] Fix generated Cargo.toml paths
+- [ ] CLI
+  - [ ] `--package <name>` flag
+  - [ ] `--output <path>` flag
+  - [ ] `--package-path <path>` flag (for local packages)
+  - [ ] Error handling and reporting
+
+- [ ] Unit tests
+  - [ ] Test ament_index parsing
+  - [ ] Test package discovery
+  - [ ] Test path handling
+  - [ ] Test error cases (missing packages)
+
+- [ ] Integration tests
+  - [ ] Generate std_msgs from system installation
+  - [ ] Generate sensor_msgs with dependencies
   - [ ] Verify output structure
-
-- [ ] Testing
-  - [ ] Unit tests for discovery
-  - [ ] Integration test with std_msgs
   - [ ] Verify generated code compiles
 
 **Acceptance**:
 ```bash
-cargo-ros2-bindgen --package std_msgs --output target/ros2_bindings/std_msgs
-ls target/ros2_bindings/std_msgs/rust/Cargo.toml  # exists
+cargo-ros2-bindgen --package std_msgs --output target/test/std_msgs
+cargo build --manifest-path target/test/std_msgs/Cargo.toml
+# → Bindings generate and compile successfully
 ```
 
-### Week 3-4: cargo-ros2
+### Subphase 2.2: cargo-ros2 Core (2 weeks)
 
 - [ ] ROS dependency discovery
   - [ ] Parse Cargo.toml dependencies
   - [ ] Check against ament_index
-  - [ ] Recursively discover transitive deps from package.xml
+  - [ ] Parse package.xml for transitive deps
+  - [ ] Recursively discover dep tree
   - [ ] Filter for interface packages only
+  - [ ] Detect cycles in dependency graph
 
 - [ ] Cache system
-  - [ ] SHA256 checksum calculation
-  - [ ] .ros2_bindgen_cache file format
+  - [ ] SHA256 checksum calculation for .msg/.srv/.action files
+  - [ ] .ros2_bindgen_cache file format (JSON)
   - [ ] Cache hit/miss logic
+  - [ ] Cache invalidation (package version, ROS_DISTRO)
   - [ ] Update cache on generation
 
 - [ ] Cargo config patcher
   - [ ] Read/write .cargo/config.toml
   - [ ] Add [patch.crates-io] entries
-  - [ ] Handle existing config
+  - [ ] Preserve existing user config
+  - [ ] Handle merge conflicts
 
 - [ ] Main workflow
   - [ ] Discover ROS deps
-  - [ ] Generate bindings (cache-aware)
-  - [ ] Patch config
+  - [ ] Check cache for each package
+  - [ ] Generate missing/stale bindings
+  - [ ] Patch .cargo/config.toml
   - [ ] Invoke cargo build
 
 - [ ] CLI
-  - [ ] `cargo ros2 build`
+  - [ ] `cargo ros2 build` command
+  - [ ] `cargo ros2 check` command
   - [ ] `--bindings-only` flag
-  - [ ] `--release` flag
+  - [ ] Forward args to cargo (after `--`)
 
-- [ ] Testing
-  - [ ] End-to-end test with real project
-  - [ ] Test cache behavior
+- [ ] Unit tests
+  - [ ] Test dependency discovery
+  - [ ] Test transitive dep resolution
+  - [ ] Test cache hit/miss logic
+  - [ ] Test checksum calculation
+  - [ ] Test config patching
+  - [ ] Test workspace detection
+
+- [ ] Integration tests
+  - [ ] End-to-end test with mock project
+  - [ ] Test cache behavior (warm/cold)
   - [ ] Test with multiple packages
+  - [ ] Test workspace scenarios
+  - [ ] Test error recovery
 
 **Acceptance**:
 ```bash
-# User project with:
-[dependencies]
-std_msgs = "*"
-sensor_msgs = "*"
+# Create test project
+cargo new test-project
+cd test-project
+echo 'std_msgs = "*"' >> Cargo.toml
 
 cargo ros2 build
-# → Generates bindings for std_msgs, sensor_msgs
-# → Patches .cargo/config.toml
-# → cargo build succeeds
+# → Discovers std_msgs
+# → Generates bindings
+# → Caches results
+# → Builds successfully
+
+cargo ros2 build
+# → Cache hit, no regeneration
+# → Builds in <5s
 ```
 
 ---
 
-## Phase 2: Production Features (5 weeks)
+## Phase 3: Production Features
 
-**Goal**: Services, actions, caching, ament installation.
+**Goal**: Add services, actions, ament installation, performance optimizations.
 
-### Week 5: Services & Actions
+**Duration**: 5 weeks
 
-- [ ] Extend cargo-ros2-bindgen
-  - [ ] Support .srv files
-  - [ ] Support .action files
-  - [ ] Test with example_interfaces
+### Subphase 3.1: Services & Actions Integration (1 week)
+
+- [ ] Full service support in cargo-ros2-bindgen
+  - [ ] Detect .srv files in packages
+  - [ ] Generate service bindings
+  - [ ] Handle service dependencies
+
+- [ ] Full action support in cargo-ros2-bindgen
+  - [ ] Detect .action files in packages
+  - [ ] Generate action bindings
+  - [ ] Handle action dependencies
+
+- [ ] Unit tests
+  - [ ] Test service discovery
+  - [ ] Test action discovery
+  - [ ] Test dependency resolution
+
+- [ ] Integration tests
+  - [ ] Generate example_interfaces (services)
+  - [ ] Generate action_tutorials_interfaces
+  - [ ] Compile and test generated code
 
 **Acceptance**:
 ```rust
+// In user project
 use example_interfaces::srv::AddTwoInts;
+use action_tutorials_interfaces::action::Fibonacci;
+
 let req = AddTwoInts::Request { a: 1, b: 2 };
+let goal = Fibonacci::Goal { order: 5 };
+// Compiles successfully
 ```
 
-### Week 6-7: Ament Installation
+### Subphase 3.2: Ament Installation (2 weeks)
 
 - [ ] Extract from cargo-ament-build
-  - [ ] Copy marker creation logic
-  - [ ] Copy source installation logic
-  - [ ] Copy binary installation logic
-  - [ ] Copy metadata installation logic
+  - [ ] Study marker creation logic
+  - [ ] Study source installation logic
+  - [ ] Study binary installation logic
+  - [ ] Study metadata installation logic
 
-- [ ] Implement AmentInstaller
-  - [ ] create_markers()
-  - [ ] install_source()
-  - [ ] install_binaries()
-  - [ ] install_metadata()
+- [ ] Implement AmentInstaller module
+  - [ ] `create_markers()` - Create ament_index markers
+  - [ ] `install_source()` - Install source files
+  - [ ] `install_binaries()` - Install compiled binaries
+  - [ ] `install_metadata()` - Install package.xml, etc.
+  - [ ] Handle library vs binary packages
 
-- [ ] Implement `cargo ros2 ament-build`
-  - [ ] Parse --install-base arg
+- [ ] Implement `cargo ros2 ament-build` command
+  - [ ] Parse `--install-base <path>` arg
   - [ ] Run full workflow (generate → build → install)
   - [ ] Forward cargo args after `--`
+  - [ ] Detect pure library packages (use `cargo check`)
 
-- [ ] Testing
+- [ ] Unit tests
+  - [ ] Test marker generation
+  - [ ] Test path construction
+  - [ ] Test file copying logic
+  - [ ] Test pure library detection
+
+- [ ] Integration tests
   - [ ] Compare output with cargo-ament-build
-  - [ ] Test with real ROS package
+  - [ ] Test with binary package
+  - [ ] Test with library package
   - [ ] Test metadata installation
+  - [ ] Verify ament_index correctness
 
 **Acceptance**:
 ```bash
 cargo ros2 ament-build --install-base install/my_pkg -- --release
-ls install/my_pkg/lib/my_pkg/       # binaries
-ls install/my_pkg/share/my_pkg/rust/  # source
+ls install/my_pkg/lib/my_pkg/       # binaries (if any)
+ls install/my_pkg/share/my_pkg/rust/  # source files
 ls install/my_pkg/share/ament_index/  # markers
+# → Directory structure matches cargo-ament-build exactly
 ```
 
-### Week 8: Performance & Polish
+### Subphase 3.3: Performance & CLI Polish (1 week)
 
-- [ ] Parallel generation (rayon)
-- [ ] Optimize checksum calculation
+- [ ] Parallel generation
+  - [ ] Use rayon for parallel package generation
+  - [ ] Parallelize checksum calculation
+  - [ ] Optimize cache lookups
+
 - [ ] Better error messages
+  - [ ] Detailed error context
+  - [ ] Suggestions for common issues
+  - [ ] Pretty error formatting (miette?)
+
 - [ ] Progress indicators
-- [ ] Documentation
+  - [ ] Show generation progress
+  - [ ] Show build progress
+  - [ ] Estimated time remaining
 
 - [ ] CLI improvements
-  - [ ] `cargo ros2 cache --list`
-  - [ ] `cargo ros2 cache --rebuild`
-  - [ ] `cargo ros2 info <package>`
+  - [ ] `cargo ros2 cache list` - Show cached bindings
+  - [ ] `cargo ros2 cache rebuild <pkg>` - Force regeneration
+  - [ ] `cargo ros2 cache clean` - Clear cache
+  - [ ] `cargo ros2 info <package>` - Show package info
+  - [ ] `--verbose` flag for debugging
 
-**Target**: Cold build < 60s, Hot build < 5s
+- [ ] Performance tests
+  - [ ] Benchmark cold build time
+  - [ ] Benchmark hot build time
+  - [ ] Benchmark cache operations
+  - [ ] Profile and optimize bottlenecks
 
-### Week 9: Testing & Documentation
+**Target**: Cold build <60s, Hot build <5s (for typical projects)
 
-- [ ] Comprehensive tests
-  - [ ] Unit tests (>80% coverage)
-  - [ ] Integration tests
+### Subphase 3.4: Testing & Documentation (2 weeks)
+
+- [ ] Comprehensive unit tests
+  - [ ] Achieve >80% code coverage
+  - [ ] Test all error paths
+  - [ ] Test edge cases
+  - [ ] Add property-based tests (proptest)
+
+- [ ] Integration tests
   - [ ] Real-world project tests
+  - [ ] Test with multiple ROS distros (Humble, Iron, Jazzy)
+  - [ ] Test workspace scenarios
+  - [ ] Test cross-crate dependencies
+  - [ ] Test with large dependency trees
 
 - [ ] Documentation
-  - [ ] User guide
-  - [ ] API docs (rustdoc)
-  - [ ] Examples
-  - [ ] Troubleshooting guide
+  - [ ] User guide (getting started, installation)
+  - [ ] CLI reference (all commands and flags)
+  - [ ] Architecture documentation (how it works)
+  - [ ] API docs (rustdoc for all public APIs)
+  - [ ] Examples (simple subscriber, publisher, service)
+  - [ ] Troubleshooting guide (common errors)
+  - [ ] Migration guide (from ros2_rust)
 
----
-
-## Phase 3: colcon Integration (4 weeks)
-
-**Goal**: Seamless colcon integration, ready for community use.
-
-### Week 10-11: colcon-ros-cargo Fork
-
-- [ ] Fork colcon-ros-cargo
-  - [ ] Create fork repo
-  - [ ] Document changes
-
-- [ ] Modify build.py
-  - [ ] Change detection: `cargo ros2 --version`
-  - [ ] Change command: `cargo ros2 ament-build`
-  - [ ] Remove cargo-ament-build dep
-  - [ ] Update error messages
-
-- [ ] Testing
-  - [ ] Test with simple package
-  - [ ] Test with workspace (multiple packages)
-  - [ ] Test with message dependencies
-  - [ ] Compare output with original
+- [ ] End-to-end tests
+  - [ ] Test complete workflow from empty project to running binary
+  - [ ] Test colcon-like workflows
+  - [ ] Test failure recovery
 
 **Acceptance**:
 ```bash
-pip install colcon-ros-cargo-v2
-cargo install cargo-ros2
+cargo test --all
+# → All tests pass
+# → Coverage >80%
 
-colcon build --packages-select my_rust_pkg
-# → Uses cargo-ros2 automatically
-# → Output identical to cargo-ament-build
+cargo doc --all --no-deps
+# → Documentation builds without warnings
+
+make lint
+# → No clippy warnings
 ```
-
-### Week 12: Multi-Distro Support
-
-- [ ] ROS_DISTRO detection
-- [ ] Handle distro differences
-  - [ ] Humble (24.04 LTS)
-  - [ ] Iron
-  - [ ] Jazzy
-
-- [ ] Testing on all distros
-
-### Week 13: Release Prep
-
-- [ ] Final testing
-- [ ] Security audit
-- [ ] Performance benchmarks
-- [ ] Documentation review
-
-- [ ] Release
-  - [ ] Publish to crates.io (cargo-ros2, cargo-ros2-bindgen)
-  - [ ] GitHub release (0.1.0)
-  - [ ] Announce on ROS Discourse
 
 ---
 
-## Phase 4: Native Rust Generator (Future)
+## Phase 4: colcon Integration & Release
 
-**Goal**: Remove Python dependency, full native implementation.
+**Goal**: Seamless colcon integration and public release.
 
-- [ ] IDL parser
-  - [ ] Lex .msg/.srv/.action files
-  - [ ] Build AST
-  - [ ] Type resolution
+**Duration**: 4 weeks
 
-- [ ] Code generator
-  - [ ] Replace EmPy templates with Rust templates
-  - [ ] Generate identical output to rosidl_generator_rs
-  - [ ] Ensure compatibility
+### Subphase 4.1: colcon-ros-cargo Fork (2 weeks)
 
-- [ ] Testing
-  - [ ] Parity tests with Python generator
-  - [ ] All existing tests pass
+- [ ] Fork colcon-ros-cargo
+  - [ ] Create fork repository
+  - [ ] Document all changes
 
-**Benefit**: Faster generation, no Python dependency
+- [ ] Modify build.py
+  - [ ] Detect cargo-ros2: `cargo ros2 --version`
+  - [ ] Change command: `cargo ros2 ament-build --install-base ...`
+  - [ ] Remove cargo-ament-build dependency
+  - [ ] Update error messages
+  - [ ] Handle edge cases (missing cargo-ros2)
+
+- [ ] Compatibility layer
+  - [ ] Support same arguments as cargo-ament-build
+  - [ ] Maintain same output format
+  - [ ] Preserve colcon integration points
+
+- [ ] Unit tests
+  - [ ] Test detection logic
+  - [ ] Test command construction
+  - [ ] Test argument forwarding
+
+- [ ] Integration tests
+  - [ ] Test with simple Rust package
+  - [ ] Test with workspace (multiple packages)
+  - [ ] Test with message dependencies
+  - [ ] Compare output with original colcon-ros-cargo
+  - [ ] Test build order in workspace
+
+**Acceptance**:
+```bash
+# Install fork
+pip install git+https://github.com/user/colcon-ros-cargo.git
+
+# Build with colcon
+colcon build --packages-select my_rust_pkg
+# → Detects cargo-ros2
+# → Builds successfully
+# → Output identical to cargo-ament-build workflow
+```
+
+### Subphase 4.2: Multi-Distro Support (1 week)
+
+- [ ] ROS distro detection
+  - [ ] Read ROS_DISTRO environment variable
+  - [ ] Validate against supported distros
+  - [ ] Warn on unknown distros
+
+- [ ] Handle distro differences
+  - [ ] Test on Humble (Ubuntu 22.04)
+  - [ ] Test on Iron (Ubuntu 22.04)
+  - [ ] Test on Jazzy (Ubuntu 24.04)
+  - [ ] Document distro-specific issues
+
+- [ ] Integration tests
+  - [ ] Test common_interfaces on all distros
+  - [ ] Test version compatibility
+  - [ ] Test package discovery across distros
+
+**Acceptance**:
+```bash
+# On Humble
+ROS_DISTRO=humble cargo ros2 build
+# → Works correctly
+
+# On Jazzy
+ROS_DISTRO=jazzy cargo ros2 build
+# → Works correctly
+```
+
+### Subphase 4.3: Release Preparation (1 week)
+
+- [ ] Final testing
+  - [ ] Full test suite on all distros
+  - [ ] Real-world project testing
+  - [ ] Performance benchmarks
+  - [ ] Memory profiling
+
+- [ ] Security audit
+  - [ ] Run cargo-deny
+  - [ ] Check dependencies for vulnerabilities
+  - [ ] Review unsafe code (if any)
+  - [ ] Add security policy
+
+- [ ] Documentation review
+  - [ ] Proofread all docs
+  - [ ] Verify examples work
+  - [ ] Create changelog
+
+- [ ] Release process
+  - [ ] Publish rosidl-runtime-rs to crates.io
+  - [ ] Publish cargo-ros2-bindgen to crates.io
+  - [ ] Publish cargo-ros2 to crates.io
+  - [ ] Create GitHub release v0.1.0
+  - [ ] Tag release commit
+  - [ ] Generate release notes
+
+- [ ] Community announcement
+  - [ ] Post on ROS Discourse
+  - [ ] Share on ros2_rust GitHub discussions
+  - [ ] Update ros2_rust documentation (if accepted)
+  - [ ] Create example repositories
+
+**Acceptance**:
+```bash
+# Users can install from crates.io
+cargo install cargo-ros2
+
+# Users can build ROS 2 Rust projects
+cargo ros2 build
+# → Works out of the box
+```
 
 ---
 
 ## Milestones
 
-### M1: MVP Complete (Week 4)
-- cargo-ros2-bindgen works
-- cargo-ros2 build works
-- Cache system functional
+### M0: Project Ready (End of Phase 0)
+- Workspace structure in place (5 crates)
+- dev-release profile configured
+- Makefile with all targets working
+- cargo-nextest and nightly Rust installed
+- `make format && make lint` passes
+- Development environment ready
 
-### M2: Feature Complete (Week 9)
-- Services & actions
-- Ament installation
-- Performance optimized
+### M1: Native Generator Complete (End of Phase 1)
+- Pure Rust IDL parser working (Subphase 1.1)
+- Code generation for messages (Subphase 1.2)
+- Services & actions support (Subphase 1.3)
+- Parity with rosidl_generator_rs (Subphase 1.4)
+- No Python dependency
 
-### M3: Production Ready (Week 13)
-- colcon integration
-- Multi-distro support
-- Public release 0.1.0
+### M2: Tools Complete (End of Phase 2)
+- cargo-ros2-bindgen functional (Subphase 2.1)
+- cargo-ros2 build workflow working (Subphase 2.2)
+- Caching system operational
+- Core functionality proven
+
+### M3: Feature Complete (End of Phase 3)
+- Full service/action support (Subphase 3.1)
+- Ament installation integrated (Subphase 3.2)
+- Performance optimized (Subphase 3.3)
+- Comprehensive testing & docs (Subphase 3.4)
+
+### M4: Production Ready (End of Phase 4)
+- colcon integration working (Subphase 4.1)
+- Multi-distro support verified (Subphase 4.2)
+- Public release 0.1.0 (Subphase 4.3)
+- Community adoption begins
 
 ---
 
@@ -266,19 +661,83 @@ colcon build --packages-select my_rust_pkg
 
 ### Technical
 - [ ] Generates bindings for all ROS interface packages
-- [ ] Passes all tests
+- [ ] Pure Rust implementation (no Python dependency)
+- [ ] Passes all tests (unit, integration, end-to-end)
+- [ ] Test coverage >80%
 - [ ] No performance regression vs cargo-ament-build
+- [ ] Cold build <60s, hot build <5s
 - [ ] Works with Humble, Iron, Jazzy
+- [ ] Compatible with existing ros2_rust ecosystem
+
+### Quality
+- [ ] Zero clippy warnings
+- [ ] All public APIs documented
+- [ ] Comprehensive user guide
+- [ ] Example projects available
+- [ ] Security audit passed
 
 ### Community
 - [ ] Positive feedback from ros2-rust maintainers
-- [ ] Adoption by ≥3 projects
+- [ ] Adoption by ≥3 real-world projects
 - [ ] colcon-ros-cargo PR accepted or fork widely used
+- [ ] Active issue resolution
+- [ ] Clear contribution guidelines
+
+---
+
+## Testing Strategy
+
+### Unit Tests (Per Component)
+- Test individual functions/modules in isolation
+- Mock external dependencies (filesystem, ament_index)
+- Test error paths and edge cases
+- Use property-based testing where applicable
+- Target: >80% coverage per crate
+
+### Integration Tests (Per Phase)
+- Test component interactions
+- Use real ROS packages (std_msgs, sensor_msgs, etc.)
+- Test against actual ament installations
+- Verify generated code compiles and links
+- Test caching behavior
+- Test workspace scenarios
+
+### End-to-End Tests (Per Milestone)
+- Complete workflow from empty project to running binary
+- Test with real ROS distros (Docker-based)
+- Performance benchmarks
+- Comparison with existing tools (cargo-ament-build, rosidl_generator_rs)
+- User scenario testing
+
+### Regression Tests (Continuous)
+- Test against known issues from ros2_rust
+- Test with complex dependency graphs
+- Test with large codebases
 
 ---
 
 ## Current Status
 
-**Phase**: Design Complete ✅
-**Next**: Phase 1, Week 1-2 (cargo-ros2-bindgen)
+**Phase**: Phase 0 Not Started
+**Next**: Phase 0, Subphase 0.1 (Workspace Setup)
 **Date**: 2025-01-30
+
+---
+
+## Timeline Summary
+
+| Phase                                 | Duration | Cumulative | Milestone              |
+|---------------------------------------|----------|------------|------------------------|
+| Phase 0: Project Preparation          | 1 week   | 1 week     | M0: Project Ready      |
+| Phase 1: Native Rust IDL Generator    | 4 weeks  | 5 weeks    | M1: Generator Complete |
+| Phase 2: cargo-ros2 Tools             | 4 weeks  | 9 weeks    | M2: Tools Complete     |
+| Phase 3: Production Features          | 5 weeks  | 14 weeks   | M3: Feature Complete   |
+| Phase 4: colcon Integration & Release | 4 weeks  | 18 weeks   | M4: Production Ready   |
+
+**Total Duration**: 18 weeks (~4.5 months)
+
+**Note**: This is more ambitious than the original 12-16 week timeline, but includes:
+- Complete native Rust implementation (no Python dependency)
+- Comprehensive testing at every phase
+- Better tooling (Makefile, enhanced CLI)
+- More thorough documentation
