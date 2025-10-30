@@ -1,0 +1,19 @@
+[package]
+name = "{{ package_name }}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rosidl-runtime-rs = { path = "../rosidl-runtime-rs" }
+{% if needs_big_array %}
+serde = { version = "1.0", features = ["derive"] }
+serde-big-array = "0.5"
+{% else %}
+serde = { version = "1.0", features = ["derive"] }
+{% endif %}
+{% for dep in dependencies %}
+{{ dep }} = { path = "../{{ dep }}" }
+{% endfor %}
+
+[lib]
+crate-type = ["lib", "cdylib"]

@@ -1,0 +1,22 @@
+// Auto-generated ROS 2 Rust bindings
+
+{% if has_messages %}
+pub mod msg {
+    pub mod rmw;
+    pub use rmw::*;
+}
+{% endif %}
+
+{% if has_services %}
+pub mod srv {
+    pub mod rmw;
+    pub use rmw::*;
+}
+{% endif %}
+
+{% if has_actions %}
+pub mod action {
+    pub mod rmw;
+    pub use rmw::*;
+}
+{% endif %}

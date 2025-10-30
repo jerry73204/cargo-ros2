@@ -9,5 +9,9 @@ description = "Code generator for ROS 2 Rust bindings"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+askama = { version = "0.12", features = ["config"] }
+rosidl-parser = { path = "../rosidl-parser" }
+thiserror = "2.0"
 
 [dev-dependencies]
+tempfile = "3.0"

@@ -1,0 +1,53 @@
+// Idiomatic Rust layer - user-friendly types
+// Package: {{ package_name }}
+// Message: {{ message_name }}
+
+use serde::{Deserialize, Serialize};
+
+{% for constant in constants %}
+pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
+{% endfor %}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct {{ message_name }} {
+    {% for field in fields %}
+    pub {{ field.name }}: {{ field.rust_type }},
+    {% endfor %}
+}
+
+impl {{ message_name }} {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for {{ message_name }} {
+    fn default() -> Self {
+        Self {
+            {% for field in fields %}
+            {{ field.name }}: Default::default(),
+            {% endfor %}
+        }
+    }
+}
+
+// Conversion between RMW and idiomatic layers
+impl From<crate::msg::rmw::{{ message_name }}> for {{ message_name }} {
+    fn from(rmw: crate::msg::rmw::{{ message_name }}) -> Self {
+        Self {
+            {% for field in fields %}
+            {{ field.name }}: rmw.{{ field.name }}.into(),
+            {% endfor %}
+        }
+    }
+}
+
+impl From<{{ message_name }}> for crate::msg::rmw::{{ message_name }} {
+    fn from(idiomatic: {{ message_name }}) -> Self {
+        Self {
+            {% for field in fields %}
+            {{ field.name }}: idiomatic.{{ field.name }}.into(),
+            {% endfor %}
+        }
+    }
+}
