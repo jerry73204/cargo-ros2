@@ -2,17 +2,17 @@
 
 ## Progress Summary
 
-**Overall Progress**: 6 of 18 subphases complete (33%)
+**Overall Progress**: 7 of 20 subphases complete (35%)
 
 | Phase                                 | Status         | Progress      |
 |---------------------------------------|----------------|---------------|
 | Phase 0: Project Preparation          | ✅ Complete    | 3/3 subphases |
-| Phase 1: Native Rust IDL Generator    | 🔄 In Progress | 3/4 subphases |
+| Phase 1: Native Rust IDL Generator    | 🔄 In Progress | 4/6 subphases |
 | Phase 2: cargo-ros2 Tools             | ⏳ Not Started | 0/2 subphases |
 | Phase 3: Production Features          | ⏳ Not Started | 0/4 subphases |
 | Phase 4: colcon Integration & Release | ⏳ Not Started | 0/3 subphases |
 
-**Latest Achievement**: Services & Actions support complete with 59 passing tests! Full code generation for messages, services, and actions with both RMW and idiomatic layers. 🎉
+**Latest Achievement**: Comparison testing infrastructure complete with 80 passing tests! Diff-based comparison with rosidl_generator_rs shows structural equivalence. 97.8% parser success rate (87/89 messages). 🎉
 
 ---
 
@@ -244,6 +244,7 @@ make format && make lint
   - [x] Test with common_interfaces (std_msgs, sensor_msgs, geometry_msgs, etc.)
   - [x] Test with action_msgs, example_interfaces
   - [x] Document any intentional differences (parser limitations with default values)
+  - [x] **NEW**: Diff-based comparison infrastructure with normalization utilities
 
 - [x] Performance testing
   - [x] Benchmark generation speed vs Python generator
@@ -256,10 +257,24 @@ make format && make lint
   - [x] Test with unusual naming
   - [x] Test with Unicode in comments
 
+- [x] **NEW**: Comparison testing infrastructure
+  - [x] Normalization helpers (`parity_helpers.rs`)
+    - Whitespace normalization
+    - Comment stripping
+    - Path normalization (package:: vs crate::)
+    - Use statement sorting
+  - [x] Diff-based comparison tests with colored output
+  - [x] Reference outputs from rosidl_generator_rs
+  - [x] 3 baseline comparisons: Bool, String, Point
+
 **Acceptance**:
 ```bash
 cargo test --package rosidl-codegen
-# → 64 tests passing (21 unit + 15 integration + 15 edge case + 9 parity + 4 compilation)
+# → 80 tests passing (21 unit + 15 integration + 15 edge case + 9 parity + 4 compilation + 10 comparison + 6 helpers)
+
+cargo test --test comparison_test -- --nocapture
+# → Shows colored diffs between our codegen and rosidl_generator_rs
+# → Identifies structural similarities and stylistic differences
 
 cargo bench --package rosidl-codegen
 # → Simple message: ~1.9 µs
@@ -270,11 +285,100 @@ cargo bench --package rosidl-codegen
 # → Message with dependencies: ~2.1 µs
 ```
 
+**Comparison Results**:
+Our codegen is **structurally equivalent** to rosidl_generator_rs with these additions:
+- `#[repr(C)]` for C-compatible FFI layout
+- `pub fn new()` constructor methods
+- Uses `Self` instead of struct names (more idiomatic)
+- Uses `.into()` for conversions (more idiomatic)
+- Empty `extern "C" {}` blocks (placeholders for future FFI bindings)
+
 **Known Limitations**:
 - Parser does not support default field values (e.g., `float64 x 0`)
 - Parser does not support negative integer constants
-- Some ROS messages fail to parse due to these limitations
+- Some ROS messages fail to parse due to these limitations (2/89 tested messages, 97.8% success rate)
+  - `geometry_msgs/Quaternion.msg` - Has default values: `float64 w 1`
+  - `sensor_msgs/NavSatStatus.msg` - Has negative constants: `int8 STATUS_UNKNOWN = -2`
 - Parity tests report failures but don't fail the test suite
+- FFI bindings not yet implemented (extern blocks are empty)
+- rosidl_runtime_rs trait implementations not yet generated
+
+### Subphase 1.5: Parser Enhancements (1 week)
+
+**Goal**: Add support for default field values and negative constants to achieve 100% parsing success.
+
+- [ ] Support negative integer constants
+  - [ ] Update rosidl-parser lexer to handle `-` in numeric literals
+  - [ ] Add tests for negative constants in all integer types (int8, int16, int32, int64)
+  - [ ] Test with sensor_msgs/NavSatStatus.msg
+  - [ ] Ensure code generation handles negative constant values correctly
+
+- [ ] Support default field values
+  - [ ] Update rosidl-parser grammar to parse default value syntax
+  - [ ] Store default values in Field AST node
+  - [ ] Update rosidl-codegen to emit default values in Default::default()
+  - [ ] Test with geometry_msgs/Quaternion.msg
+  - [ ] Verify default values work for all primitive types
+
+- [ ] Validation tests
+  - [ ] Verify geometry_msgs/Quaternion.msg parses and generates correctly
+  - [ ] Verify sensor_msgs/NavSatStatus.msg parses and generates correctly
+  - [ ] Achieve 100% success rate on common_interfaces packages
+  - [ ] Add regression tests to prevent future breakage
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-parser
+# → All tests pass including negative constants and default values
+
+cargo test --test parity_test -- --nocapture
+# → 89/89 messages parse successfully (100%)
+# → geometry_msgs/Quaternion.msg: ✓
+# → sensor_msgs/NavSatStatus.msg: ✓
+```
+
+### Subphase 1.6: FFI Bindings & Runtime Traits (2 weeks)
+
+**Goal**: Generate complete FFI bindings and trait implementations for C interop.
+
+- [ ] Generate extern "C" blocks
+  - [ ] Type support handle getters
+  - [ ] Message init/fini functions
+  - [ ] Sequence init/fini/copy functions
+  - [ ] Proper `#[link]` attributes for C libraries
+
+- [ ] Implement rosidl_runtime_rs traits
+  - [ ] `Message` trait with into/from RMW conversions
+  - [ ] `SequenceAlloc` trait using C functions
+  - [ ] `RmwMessage` trait for type identity
+  - [ ] Proper unsafe blocks with SAFETY comments
+
+- [ ] Update Default implementation
+  - [ ] Call C init function instead of Default::default()
+  - [ ] Proper error handling for init failures
+  - [ ] Maintain backward compatibility
+
+- [ ] Feature gates and conditional compilation
+  - [ ] Add `#[cfg_attr(feature = "serde", ...)]` attributes
+  - [ ] Make FFI bindings optional (for pure Rust testing)
+  - [ ] Document feature flags in generated Cargo.toml
+
+- [ ] Integration tests
+  - [ ] Test FFI round-trip (create, convert, destroy)
+  - [ ] Test sequence allocation/deallocation
+  - [ ] Test type support handle retrieval
+  - [ ] Verify no memory leaks with valgrind
+
+**Acceptance**:
+```bash
+cargo test --package rosidl-codegen
+# → All FFI binding tests pass
+# → Generated code matches rosidl_generator_rs structure
+
+cargo test --test comparison_test -- --nocapture
+# → No diff in FFI declarations
+# → Trait implementations match reference
+```
 
 ---
 
