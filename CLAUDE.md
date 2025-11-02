@@ -162,6 +162,29 @@ cd tmp/
 # ... work with temporary files ...
 ```
 
+### File Manipulation Tools
+
+**Prefer Claude Code tools over Bash commands** for file operations:
+
+- ✅ **Use**: `Write` tool to create new files in `tmp/`
+- ✅ **Use**: `Edit` tool to modify files in `tmp/`
+- ✅ **Use**: `Read` tool to view file contents
+- ❌ **Avoid**: `cat`, `echo >`, `cat <<EOF`, or heredocs via Bash
+
+**Rationale**: Claude Code's file tools provide better error handling, proper escaping, and cleaner interaction. Bash commands like `cat` and `echo` are prone to quoting issues and don't integrate well with the tool ecosystem.
+
+**Example**:
+```
+# ❌ Don't do this:
+Bash: cat > tmp/test.rs <<'EOF'
+fn main() { println!("test"); }
+EOF
+
+# ✅ Do this instead:
+Write: tmp/test.rs
+Content: fn main() { println!("test"); }
+```
+
 ### Code Quality
 
 ```bash
