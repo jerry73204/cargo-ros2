@@ -30,7 +30,11 @@ pub mod request {
         fn default() -> Self {
             Self {
                 {% for field in request_fields %}
+                {% if field.default_value != "" -%}
+                {{ field.name }}: {{ field.default_value }},
+                {% else -%}
                 {{ field.name }}: Default::default(),
+                {% endif -%}
                 {% endfor %}
             }
         }
@@ -63,7 +67,11 @@ pub mod response {
         fn default() -> Self {
             Self {
                 {% for field in response_fields %}
+                {% if field.default_value != "" -%}
+                {{ field.name }}: {{ field.default_value }},
+                {% else -%}
                 {{ field.name }}: Default::default(),
+                {% endif -%}
                 {% endfor %}
             }
         }

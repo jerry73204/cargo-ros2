@@ -193,6 +193,14 @@ impl Parser {
     }
 
     fn parse_constant_value(&mut self, _type_: &FieldType) -> ParseResult<ConstantValue> {
+        // Check for negative sign
+        let is_negative = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Minus)) {
+            self.advance(); // consume -
+            true
+        } else {
+            false
+        };
+
         let token = self.advance().ok_or(ParseError::UnexpectedEOF)?;
         let text = token.text.clone();
         let kind = token.kind.clone();
@@ -202,18 +210,46 @@ impl Parser {
             | TokenKind::HexInteger
             | TokenKind::BinaryInteger
             | TokenKind::OctalInteger => {
-                let value = self.parse_integer(&text, &kind)?;
+                let mut value = self.parse_integer(&text, &kind)?;
+                if is_negative {
+                    value = -value;
+                }
                 Ok(ConstantValue::Integer(value))
             }
             TokenKind::Float => {
-                let value = text
+                let mut value = text
                     .parse::<f64>()
                     .map_err(|_| ParseError::InvalidFloat(text.clone()))?;
+                if is_negative {
+                    value = -value;
+                }
                 Ok(ConstantValue::Float(value))
             }
-            TokenKind::True => Ok(ConstantValue::Bool(true)),
-            TokenKind::False => Ok(ConstantValue::Bool(false)),
+            TokenKind::True => {
+                if is_negative {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "numeric value".to_string(),
+                        got: "true".to_string(),
+                    });
+                }
+                Ok(ConstantValue::Bool(true))
+            }
+            TokenKind::False => {
+                if is_negative {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "numeric value".to_string(),
+                        got: "false".to_string(),
+                    });
+                }
+                Ok(ConstantValue::Bool(false))
+            }
             TokenKind::StringLiteral => {
+                if is_negative {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "numeric value".to_string(),
+                        got: text,
+                    });
+                }
                 // Remove quotes
                 let s = text.trim_matches(|c| c == '"' || c == '\'');
                 Ok(ConstantValue::String(s.to_string()))
@@ -229,7 +265,8 @@ impl Parser {
         let field_type = self.parse_field_type()?;
         let name = self.expect(TokenKind::Identifier)?;
 
-        // Check if this is a constant (has = sign)
+        // Check if this is a constant (has = sign followed by value)
+        // Constants have explicit = sign and are typically UPPER_CASE
         if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Equals)) {
             self.advance(); // consume =
             let value = self.parse_constant_value(&field_type)?;
@@ -242,14 +279,8 @@ impl Parser {
                 }),
             ))
         } else {
-            // It's a field, check for default value
-            let default_value =
-                if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Equals)) {
-                    self.advance(); // consume =
-                    Some(self.parse_constant_value(&field_type)?)
-                } else {
-                    None
-                };
+            // It's a field, check for default value (with or without =)
+            let default_value = self.try_parse_default_value(&field_type)?;
 
             Ok((
                 Some(Field {
@@ -259,6 +290,36 @@ impl Parser {
                 }),
                 None,
             ))
+        }
+    }
+
+    fn try_parse_default_value(
+        &mut self,
+        field_type: &FieldType,
+    ) -> ParseResult<Option<ConstantValue>> {
+        // Check if next token is a literal value (default value without =)
+        // or if there's an = sign (default value with =)
+        match self.current().map(|t| &t.kind) {
+            Some(TokenKind::Equals) => {
+                self.advance(); // consume =
+                Ok(Some(self.parse_constant_value(field_type)?))
+            }
+            // Check for literal values (default value without =)
+            Some(
+                TokenKind::DecimalInteger
+                | TokenKind::HexInteger
+                | TokenKind::BinaryInteger
+                | TokenKind::OctalInteger
+                | TokenKind::Float
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::StringLiteral
+                | TokenKind::Minus, // For negative numbers
+            ) => {
+                // Parse as default value
+                Ok(Some(self.parse_constant_value(field_type)?))
+            }
+            _ => Ok(None), // No default value
         }
     }
 
@@ -428,5 +489,117 @@ mod tests {
         assert_eq!(act.spec.goal.fields.len(), 1);
         assert_eq!(act.spec.result.fields.len(), 1);
         assert_eq!(act.spec.feedback.fields.len(), 1);
+    }
+
+    #[test]
+    fn parse_negative_constant() {
+        let msg = parse_message("int8 STATUS_UNKNOWN=-2\nint8 STATUS_NO_FIX=-1\n").unwrap();
+        assert_eq!(msg.constants.len(), 2);
+        assert_eq!(msg.constants[0].name, "STATUS_UNKNOWN");
+        assert!(matches!(msg.constants[0].value, ConstantValue::Integer(-2)));
+        assert_eq!(msg.constants[1].name, "STATUS_NO_FIX");
+        assert!(matches!(msg.constants[1].value, ConstantValue::Integer(-1)));
+    }
+
+    #[test]
+    fn parse_negative_float_constant() {
+        let msg = parse_message("float64 NEGATIVE_PI=-3.14159\n").unwrap();
+        assert_eq!(msg.constants.len(), 1);
+        assert!(
+            matches!(msg.constants[0].value, ConstantValue::Float(v) if (v + 3.14159).abs() < 0.0001)
+        );
+    }
+
+    #[test]
+    fn parse_default_value_without_equals() {
+        let msg = parse_message("float64 x 0\nfloat64 y 0\nfloat64 z 0\nfloat64 w 1\n").unwrap();
+        assert_eq!(msg.fields.len(), 4);
+
+        // All should be fields, not constants
+        assert_eq!(msg.constants.len(), 0);
+
+        // Check default values
+        assert!(matches!(
+            msg.fields[0].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[1].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[2].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[3].default_value,
+            Some(ConstantValue::Integer(1))
+        ));
+    }
+
+    #[test]
+    fn parse_field_with_negative_default() {
+        let msg = parse_message("int8 status -2\n").unwrap();
+        assert_eq!(msg.fields.len(), 1);
+        assert_eq!(msg.constants.len(), 0);
+        assert_eq!(msg.fields[0].name, "status");
+        assert!(matches!(
+            msg.fields[0].default_value,
+            Some(ConstantValue::Integer(-2))
+        ));
+    }
+
+    #[test]
+    fn parse_mixed_constants_and_defaults() {
+        let msg =
+            parse_message("int8 STATUS_UNKNOWN=-2\nint8 STATUS_FIX=0\nint8 status -2\n").unwrap();
+        assert_eq!(msg.constants.len(), 2);
+        assert_eq!(msg.fields.len(), 1);
+
+        // Constants
+        assert_eq!(msg.constants[0].name, "STATUS_UNKNOWN");
+        assert!(matches!(msg.constants[0].value, ConstantValue::Integer(-2)));
+        assert_eq!(msg.constants[1].name, "STATUS_FIX");
+        assert!(matches!(msg.constants[1].value, ConstantValue::Integer(0)));
+
+        // Field with default
+        assert_eq!(msg.fields[0].name, "status");
+        assert!(matches!(
+            msg.fields[0].default_value,
+            Some(ConstantValue::Integer(-2))
+        ));
+    }
+
+    #[test]
+    fn parse_quaternion_message() {
+        // Test the actual Quaternion.msg structure
+        let input = "# This represents an orientation in free space in quaternion form.\n\nfloat64 x 0\nfloat64 y 0\nfloat64 z 0\nfloat64 w 1\n";
+        let msg = parse_message(input).unwrap();
+
+        assert_eq!(msg.fields.len(), 4);
+        assert_eq!(msg.constants.len(), 0);
+
+        assert_eq!(msg.fields[0].name, "x");
+        assert_eq!(msg.fields[1].name, "y");
+        assert_eq!(msg.fields[2].name, "z");
+        assert_eq!(msg.fields[3].name, "w");
+
+        // Check default values
+        assert!(matches!(
+            msg.fields[0].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[1].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[2].default_value,
+            Some(ConstantValue::Integer(0))
+        ));
+        assert!(matches!(
+            msg.fields[3].default_value,
+            Some(ConstantValue::Integer(1))
+        ));
     }
 }

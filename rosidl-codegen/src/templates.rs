@@ -41,11 +41,13 @@ pub struct MessageIdiomaticTemplate<'a> {
 pub struct RmwField {
     pub name: String,
     pub rust_type: String,
+    pub default_value: String,
 }
 
 pub struct IdiomaticField {
     pub name: String,
     pub rust_type: String,
+    pub default_value: String,
 }
 
 pub struct MessageConstant {

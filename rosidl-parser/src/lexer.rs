@@ -81,6 +81,9 @@ pub enum TokenKind {
     #[token("<=")]
     LessEqual,
 
+    #[token("-")]
+    Minus,
+
     // Identifiers (lowercase_with_underscores or UpperCamelCase)
     #[regex(r"[a-zA-Z][a-zA-Z0-9_]*")]
     Identifier,
@@ -250,5 +253,46 @@ mod tests {
         assert!(tokens.iter().any(|t| t.kind == TokenKind::String));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::LessEqual));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::DecimalInteger));
+    }
+
+    #[test]
+    fn lex_negative_constant() {
+        let input = "int8 NEGATIVE=-42";
+        let tokens = lex(input).unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Minus));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::DecimalInteger));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Equals));
+    }
+
+    #[test]
+    fn lex_default_value_without_equals() {
+        let input = "float64 x 0";
+        let tokens = lex(input).unwrap();
+        assert_eq!(tokens.len(), 3); // float64, x, 0
+        assert_eq!(tokens[0].kind, TokenKind::Float64);
+        assert_eq!(tokens[1].kind, TokenKind::Identifier);
+        assert_eq!(tokens[2].kind, TokenKind::DecimalInteger);
+        // Should NOT have equals
+        assert!(!tokens.iter().any(|t| t.kind == TokenKind::Equals));
+    }
+
+    #[test]
+    fn lex_triple_dash_vs_minus() {
+        let input = "int8 a\n---\nint8 b -1";
+        let tokens = lex(input).unwrap();
+        // Should have TripleDash for separator
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::TripleDash));
+        // Should also have Minus for -1
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Minus));
+        // TripleDash should come before Minus
+        let triple_dash_pos = tokens
+            .iter()
+            .position(|t| t.kind == TokenKind::TripleDash)
+            .unwrap();
+        let minus_pos = tokens
+            .iter()
+            .position(|t| t.kind == TokenKind::Minus)
+            .unwrap();
+        assert!(triple_dash_pos < minus_pos);
     }
 }

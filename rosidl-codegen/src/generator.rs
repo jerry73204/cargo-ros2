@@ -3,7 +3,7 @@ use crate::templates::{
     LibRsTemplate, MessageConstant, MessageIdiomaticTemplate, MessageRmwTemplate, RmwField,
     ServiceIdiomaticTemplate, ServiceRmwTemplate,
 };
-use crate::types::{escape_keyword, rust_type_for_field};
+use crate::types::{constant_value_to_rust, escape_keyword, rust_type_for_field};
 use crate::utils::{extract_dependencies, needs_big_array};
 use askama::Template;
 use rosidl_parser::{Action, Message, Service};
@@ -73,6 +73,11 @@ pub fn generate_message_package(
         .map(|f| RmwField {
             name: escape_keyword(&f.name),
             rust_type: rust_type_for_field(&f.field_type, true),
+            default_value: f
+                .default_value
+                .as_ref()
+                .map(constant_value_to_rust)
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -82,7 +87,7 @@ pub fn generate_message_package(
         .map(|c| MessageConstant {
             name: c.name.clone(),
             rust_type: rust_type_for_field(&c.constant_type, true),
-            value: format!("{:?}", c.value), // Simple Debug formatting for now
+            value: constant_value_to_rust(&c.value),
         })
         .collect();
 
@@ -101,6 +106,11 @@ pub fn generate_message_package(
         .map(|f| IdiomaticField {
             name: escape_keyword(&f.name),
             rust_type: rust_type_for_field(&f.field_type, false),
+            default_value: f
+                .default_value
+                .as_ref()
+                .map(constant_value_to_rust)
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -110,7 +120,7 @@ pub fn generate_message_package(
         .map(|c| MessageConstant {
             name: c.name.clone(),
             rust_type: rust_type_for_field(&c.constant_type, false),
-            value: format!("{:?}", c.value),
+            value: constant_value_to_rust(&c.value),
         })
         .collect();
 
@@ -188,6 +198,11 @@ pub fn generate_service_package(
             .map(|f| RmwField {
                 name: escape_keyword(&f.name),
                 rust_type: rust_type_for_field(&f.field_type, true),
+                default_value: f
+                    .default_value
+                    .as_ref()
+                    .map(constant_value_to_rust)
+                    .unwrap_or_default(),
             })
             .collect()
     };
@@ -198,6 +213,11 @@ pub fn generate_service_package(
             .map(|f| IdiomaticField {
                 name: escape_keyword(&f.name),
                 rust_type: rust_type_for_field(&f.field_type, false),
+                default_value: f
+                    .default_value
+                    .as_ref()
+                    .map(constant_value_to_rust)
+                    .unwrap_or_default(),
             })
             .collect()
     };
@@ -208,7 +228,7 @@ pub fn generate_service_package(
             .map(|c| MessageConstant {
                 name: c.name.clone(),
                 rust_type: rust_type_for_field(&c.constant_type, rmw_layer),
-                value: format!("{:?}", c.value),
+                value: constant_value_to_rust(&c.value),
             })
             .collect()
     };
@@ -304,6 +324,11 @@ pub fn generate_action_package(
             .map(|f| RmwField {
                 name: escape_keyword(&f.name),
                 rust_type: rust_type_for_field(&f.field_type, true),
+                default_value: f
+                    .default_value
+                    .as_ref()
+                    .map(constant_value_to_rust)
+                    .unwrap_or_default(),
             })
             .collect()
     };
@@ -314,6 +339,11 @@ pub fn generate_action_package(
             .map(|f| IdiomaticField {
                 name: escape_keyword(&f.name),
                 rust_type: rust_type_for_field(&f.field_type, false),
+                default_value: f
+                    .default_value
+                    .as_ref()
+                    .map(constant_value_to_rust)
+                    .unwrap_or_default(),
             })
             .collect()
     };
@@ -324,7 +354,7 @@ pub fn generate_action_package(
             .map(|c| MessageConstant {
                 name: c.name.clone(),
                 rust_type: rust_type_for_field(&c.constant_type, rmw_layer),
-                value: format!("{:?}", c.value),
+                value: constant_value_to_rust(&c.value),
             })
             .collect()
     };

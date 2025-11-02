@@ -29,7 +29,11 @@ pub mod goal {
         fn default() -> Self {
             Self {
                 {% for field in goal_fields %}
+                {% if field.default_value != "" -%}
+                {{ field.name }}: {{ field.default_value }},
+                {% else -%}
                 {{ field.name }}: Default::default(),
+                {% endif -%}
                 {% endfor %}
             }
         }
@@ -83,7 +87,11 @@ pub mod result {
         fn default() -> Self {
             Self {
                 {% for field in result_fields %}
+                {% if field.default_value != "" -%}
+                {{ field.name }}: {{ field.default_value }},
+                {% else -%}
                 {{ field.name }}: Default::default(),
+                {% endif -%}
                 {% endfor %}
             }
         }
@@ -137,7 +145,11 @@ pub mod feedback {
         fn default() -> Self {
             Self {
                 {% for field in feedback_fields %}
+                {% if field.default_value != "" -%}
+                {{ field.name }}: {{ field.default_value }},
+                {% else -%}
                 {{ field.name }}: Default::default(),
+                {% endif -%}
                 {% endfor %}
             }
         }

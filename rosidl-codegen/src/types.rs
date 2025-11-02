@@ -1,4 +1,23 @@
+use rosidl_parser::ast::ConstantValue;
 use rosidl_parser::FieldType;
+
+/// Convert a ConstantValue to a Rust code string
+pub fn constant_value_to_rust(value: &ConstantValue) -> String {
+    match value {
+        ConstantValue::Integer(i) => i.to_string(),
+        ConstantValue::Float(f) => {
+            // Ensure float literals always have decimal point
+            let s = f.to_string();
+            if s.contains('.') || s.contains('e') || s.contains('E') {
+                s
+            } else {
+                format!("{}.0", s)
+            }
+        }
+        ConstantValue::Bool(b) => b.to_string(),
+        ConstantValue::String(s) => format!("\"{}\"", s.escape_default()),
+    }
+}
 
 /// Rust keywords that need to be escaped
 const RUST_KEYWORDS: &[&str] = &[

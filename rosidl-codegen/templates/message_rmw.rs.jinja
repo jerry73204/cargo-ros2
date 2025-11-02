@@ -26,7 +26,11 @@ impl Default for {{ message_name }} {
     fn default() -> Self {
         Self {
             {% for field in fields %}
+            {% if field.default_value != "" -%}
+            {{ field.name }}: {{ field.default_value }},
+            {% else -%}
             {{ field.name }}: Default::default(),
+            {% endif -%}
             {% endfor %}
         }
     }
