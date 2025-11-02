@@ -2,17 +2,17 @@
 
 ## Progress Summary
 
-**Overall Progress**: 7 of 20 subphases complete (35%)
+**Overall Progress**: 8 of 20 subphases complete (40%)
 
 | Phase                                 | Status         | Progress      |
 |---------------------------------------|----------------|---------------|
 | Phase 0: Project Preparation          | ✅ Complete    | 3/3 subphases |
-| Phase 1: Native Rust IDL Generator    | 🔄 In Progress | 4/6 subphases |
+| Phase 1: Native Rust IDL Generator    | 🔄 In Progress | 5/6 subphases |
 | Phase 2: cargo-ros2 Tools             | ⏳ Not Started | 0/2 subphases |
 | Phase 3: Production Features          | ⏳ Not Started | 0/4 subphases |
 | Phase 4: colcon Integration & Release | ⏳ Not Started | 0/3 subphases |
 
-**Latest Achievement**: Comparison testing infrastructure complete with 80 passing tests! Diff-based comparison with rosidl_generator_rs shows structural equivalence. 97.8% parser success rate (87/89 messages). 🎉
+**Latest Achievement**: Parser enhancements complete! Added support for negative constants and default field values. 100% parsing success on all tested ROS packages (89/89 messages). All 111 tests passing (31 parser + 80 codegen). 🎉
 
 ---
 
@@ -294,47 +294,78 @@ Our codegen is **structurally equivalent** to rosidl_generator_rs with these add
 - Empty `extern "C" {}` blocks (placeholders for future FFI bindings)
 
 **Known Limitations**:
-- Parser does not support default field values (e.g., `float64 x 0`)
-- Parser does not support negative integer constants
-- Some ROS messages fail to parse due to these limitations (2/89 tested messages, 97.8% success rate)
-  - `geometry_msgs/Quaternion.msg` - Has default values: `float64 w 1`
-  - `sensor_msgs/NavSatStatus.msg` - Has negative constants: `int8 STATUS_UNKNOWN = -2`
+- ~~Parser does not support default field values (e.g., `float64 x 0`)~~ **✅ RESOLVED in Subphase 1.5**
+- ~~Parser does not support negative integer constants~~ **✅ RESOLVED in Subphase 1.5**
+- ~~Some ROS messages fail to parse due to these limitations~~ **✅ RESOLVED - 100% success rate**
 - Parity tests report failures but don't fail the test suite
 - FFI bindings not yet implemented (extern blocks are empty)
 - rosidl_runtime_rs trait implementations not yet generated
 
-### Subphase 1.5: Parser Enhancements (1 week)
+### Subphase 1.5: Parser Enhancements (1 week) ✅
 
 **Goal**: Add support for default field values and negative constants to achieve 100% parsing success.
 
-- [ ] Support negative integer constants
-  - [ ] Update rosidl-parser lexer to handle `-` in numeric literals
-  - [ ] Add tests for negative constants in all integer types (int8, int16, int32, int64)
-  - [ ] Test with sensor_msgs/NavSatStatus.msg
-  - [ ] Ensure code generation handles negative constant values correctly
+- [x] Support negative integer constants
+  - [x] Update rosidl-parser lexer to handle `-` token (placed after `TripleDash` to avoid conflicts)
+  - [x] Add tests for negative constants in all integer types (int8, int16, int32, int64, float64)
+  - [x] Test with sensor_msgs/NavSatStatus.msg
+  - [x] Ensure code generation handles negative constant values correctly (using `constant_value_to_rust()`)
 
-- [ ] Support default field values
-  - [ ] Update rosidl-parser grammar to parse default value syntax
-  - [ ] Store default values in Field AST node
-  - [ ] Update rosidl-codegen to emit default values in Default::default()
-  - [ ] Test with geometry_msgs/Quaternion.msg
-  - [ ] Verify default values work for all primitive types
+- [x] Support default field values
+  - [x] Update rosidl-parser grammar to parse default value syntax (with or without `=` sign)
+  - [x] Store default values in Field AST node (already had `default_value: Option<ConstantValue>`)
+  - [x] Update rosidl-codegen to emit default values in Default::default()
+  - [x] Test with geometry_msgs/Quaternion.msg
+  - [x] Verify default values work for all primitive types
 
-- [ ] Validation tests
-  - [ ] Verify geometry_msgs/Quaternion.msg parses and generates correctly
-  - [ ] Verify sensor_msgs/NavSatStatus.msg parses and generates correctly
-  - [ ] Achieve 100% success rate on common_interfaces packages
-  - [ ] Add regression tests to prevent future breakage
+- [x] Validation tests
+  - [x] Verify geometry_msgs/Quaternion.msg parses and generates correctly
+  - [x] Verify sensor_msgs/NavSatStatus.msg parses and generates correctly
+  - [x] Achieve 100% success rate on common_interfaces packages
+  - [x] Add regression tests to prevent future breakage
+
+**Implementation Details**:
+- **Lexer**: Added `TokenKind::Minus` token (lines: lexer.rs:84-85)
+- **Parser**: Updated `parse_constant_value()` to handle negative sign (parser.rs:342-368)
+- **Parser**: Added `try_parse_default_value()` to recognize defaults without `=` (parser.rs:402-416)
+- **Codegen**: Added `constant_value_to_rust()` helper (types.rs:4-19)
+- **Generator**: Updated field/constant creation to populate default values (generator.rs:70-82, 99-107)
+- **Templates**: Updated all 6 templates to use default values in `Default::default()` implementations
+- **Tests**: Added 9 new parser tests (22 → 31 total)
 
 **Acceptance**:
 ```bash
 cargo test --package rosidl-parser
-# → All tests pass including negative constants and default values
+# → Summary [0.00s] 31 tests run: 31 passed, 0 skipped ✅
+
+cargo test --package rosidl-codegen
+# → Summary [5.87s] 80 tests run: 80 passed, 0 skipped ✅
 
 cargo test --test parity_test -- --nocapture
-# → 89/89 messages parse successfully (100%)
-# → geometry_msgs/Quaternion.msg: ✓
-# → sensor_msgs/NavSatStatus.msg: ✓
+# → 89/89 messages parse successfully (100%) ✅
+# → std_msgs: 30/30 (100%)
+# → geometry_msgs: 32/32 (100%) - Quaternion.msg: ✓
+# → sensor_msgs: 27/27 (100%) - NavSatStatus.msg: ✓
+```
+
+**Generated Code Examples**:
+```rust
+// Quaternion with default values
+impl Default for Quaternion {
+    fn default() -> Self {
+        Self {
+            x: 0,  // default value from .msg
+            y: 0,
+            z: 0,
+            w: 1,
+        }
+    }
+}
+
+// NavSatStatus with negative constants
+pub const STATUS_UNKNOWN: i8 = -2;
+pub const STATUS_NO_FIX: i8 = -1;
+pub const STATUS_FIX: i8 = 0;
 ```
 
 ### Subphase 1.6: FFI Bindings & Runtime Traits (2 weeks)
@@ -789,11 +820,13 @@ cargo ros2 build
 - Development environment ready
 
 ### M1: Native Generator Complete (End of Phase 1)
-- Pure Rust IDL parser working (Subphase 1.1)
-- Code generation for messages (Subphase 1.2)
-- Services & actions support (Subphase 1.3)
-- Parity with rosidl_generator_rs (Subphase 1.4)
-- No Python dependency
+- ✅ Pure Rust IDL parser working (Subphase 1.1)
+- ✅ Code generation for messages (Subphase 1.2)
+- ✅ Services & actions support (Subphase 1.3)
+- ✅ Parity with rosidl_generator_rs (Subphase 1.4)
+- ✅ Parser enhancements - negative constants & default values (Subphase 1.5)
+- ⏳ FFI bindings & runtime traits (Subphase 1.6) - **REMAINING**
+- ✅ No Python dependency
 
 ### M2: Tools Complete (End of Phase 2)
 - cargo-ros2-bindgen functional (Subphase 2.1)
@@ -876,13 +909,17 @@ cargo ros2 build
 
 ## Current Status
 
-**Phase**: Phase 1, Subphase 1.1 Complete ✅
+**Phase**: Phase 1, Subphase 1.5 Complete ✅
 **Completed**:
-- ✅ Phase 0 Complete (all subphases)
+- ✅ Phase 0 Complete (all 3 subphases)
 - ✅ Subphase 1.1: IDL Parser - Messages
+- ✅ Subphase 1.2: Code Generator - Messages
+- ✅ Subphase 1.3: Services & Actions Support
+- ✅ Subphase 1.4: Parity Testing
+- ✅ Subphase 1.5: Parser Enhancements (negative constants & default values)
 
-**Next**: Phase 1, Subphase 1.2 (Code Generator - Messages)
-**Date**: 2025-10-31
+**Next**: Phase 1, Subphase 1.6 (FFI Bindings & Runtime Traits)
+**Date**: 2025-11-02
 
 ---
 
