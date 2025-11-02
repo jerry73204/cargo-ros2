@@ -27,15 +27,8 @@ pub mod request {
 
     impl Default for {{ service_name }}Request {
         fn default() -> Self {
-            Self {
-                {% for field in request_fields %}
-                {% if field.default_value != "" -%}
-                {{ field.name }}: {{ field.default_value }},
-                {% else -%}
-                {{ field.name }}: Default::default(),
-                {% endif -%}
-                {% endfor %}
-            }
+            // Leverage RMW message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::srv::rmw::request::{{ service_name }}Request::default())
         }
     }
 
@@ -58,6 +51,21 @@ pub mod request {
                 {{ field.name }}: idiomatic.{{ field.name }}.into(),
                 {% endfor %}
             }
+        }
+    }
+
+    // Message trait implementation for rosidl_runtime_rs
+    impl crate::rosidl_runtime_rs::Message for {{ service_name }}Request {
+        type RmwMsg = crate::srv::rmw::request::{{ service_name }}Request;
+
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+            // Convert from idiomatic to RMW format
+            std::borrow::Cow::Owned(msg_cow.into_owned().into())
+        }
+
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+            // Convert from RMW to idiomatic format
+            msg.into()
         }
     }
 }
@@ -85,15 +93,8 @@ pub mod response {
 
     impl Default for {{ service_name }}Response {
         fn default() -> Self {
-            Self {
-                {% for field in response_fields %}
-                {% if field.default_value != "" -%}
-                {{ field.name }}: {{ field.default_value }},
-                {% else -%}
-                {{ field.name }}: Default::default(),
-                {% endif -%}
-                {% endfor %}
-            }
+            // Leverage RMW message's C init function to get correct default values
+            <Self as rosidl_runtime_rs::Message>::from_rmw_message(crate::srv::rmw::response::{{ service_name }}Response::default())
         }
     }
 
@@ -118,8 +119,42 @@ pub mod response {
             }
         }
     }
+
+    // Message trait implementation for rosidl_runtime_rs
+    impl crate::rosidl_runtime_rs::Message for {{ service_name }}Response {
+        type RmwMsg = crate::srv::rmw::response::{{ service_name }}Response;
+
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+            // Convert from idiomatic to RMW format
+            std::borrow::Cow::Owned(msg_cow.into_owned().into())
+        }
+
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+            // Convert from RMW to idiomatic format
+            msg.into()
+        }
+    }
 }
 
 // Re-export for convenience
 pub use request::{{ service_name }}Request;
 pub use response::{{ service_name }}Response;
+
+// Service type support
+#[link(name = "{{ package_name }}__rosidl_typesupport_c")]
+extern "C" {
+    fn rosidl_typesupport_c__get_service_type_support_handle__{{ package_name }}__srv__{{ service_name }}() -> *const std::ffi::c_void;
+}
+
+// Service struct (zero-sized type)
+pub struct {{ service_name }};
+
+impl crate::rosidl_runtime_rs::Service for {{ service_name }} {
+    type Request = {{ service_name }}Request;
+    type Response = {{ service_name }}Response;
+
+    fn get_type_support() -> *const std::ffi::c_void {
+        // SAFETY: No preconditions for this function
+        unsafe { rosidl_typesupport_c__get_service_type_support_handle__{{ package_name }}__srv__{{ service_name }}() }
+    }
+}

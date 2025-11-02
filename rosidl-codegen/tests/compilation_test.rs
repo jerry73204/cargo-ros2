@@ -47,9 +47,11 @@ pub mod rosidl_runtime_rs {
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct BoundedWString<const N: usize>(std::string::String);
 
+    #[repr(C)]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct Sequence<T>(Vec<T>);
 
+    #[repr(C)]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct BoundedSequence<T, const N: usize>(Vec<T>);
 
@@ -75,6 +77,41 @@ pub mod rosidl_runtime_rs {
         fn default() -> Self {
             BoundedWString(std::string::String::new())
         }
+    }
+
+    // Trait definitions for ROS runtime
+    pub trait SequenceAlloc: Sized {
+        fn sequence_init(seq: &mut Sequence<Self>, size: usize) -> bool;
+        fn sequence_fini(seq: &mut Sequence<Self>);
+        fn sequence_copy(in_seq: &Sequence<Self>, out_seq: &mut Sequence<Self>) -> bool;
+    }
+
+    pub trait Message: Clone {
+        type RmwMsg: Clone;
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg>;
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self;
+    }
+
+    pub trait RmwMessage: Sized {
+        const TYPE_NAME: &'static str;
+        fn get_type_support() -> *const std::ffi::c_void;
+    }
+
+    pub trait Service {
+        type Request;
+        type Response;
+        fn get_type_support() -> *const std::ffi::c_void;
+    }
+
+    pub trait Action {
+        type Goal;
+        type Result;
+        type Feedback;
+        type FeedbackMessage;
+        type SendGoalService;
+        type CancelGoalService;
+        type GetResultService;
+        fn get_type_support() -> *const std::ffi::c_void;
     }
 }
 "#
@@ -113,7 +150,8 @@ fn test_simple_message_compiles() -> Result<(), GeneratorError> {
 
     // Create a simple lib.rs that includes the generated code
     // Add use statement if generated code uses rosidl_runtime_rs types
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs");
+    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
+        || result.message_idiomatic.contains("rosidl_runtime_rs");
     let use_stmt = if needs_rosidl_types {
         "use crate::rosidl_runtime_rs;"
     } else {
@@ -126,8 +164,10 @@ fn test_simple_message_compiles() -> Result<(), GeneratorError> {
 
 // Auto-generated message types
 pub mod msg {{
+    {}
+
     pub mod rmw {{
-        {}
+        use super::*;
         {}
     }}
 
@@ -187,7 +227,8 @@ fn test_message_with_arrays_compiles() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs");
+    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
+        || result.message_idiomatic.contains("rosidl_runtime_rs");
     let use_stmt = if needs_rosidl_types {
         "use crate::rosidl_runtime_rs;"
     } else {
@@ -199,8 +240,10 @@ fn test_message_with_arrays_compiles() -> Result<(), GeneratorError> {
 {}
 
 pub mod msg {{
+    {}
+
     pub mod rmw {{
-        {}
+        use super::*;
         {}
     }}
 
@@ -339,7 +382,8 @@ fn test_clippy_no_warnings() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs");
+    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
+        || result.message_idiomatic.contains("rosidl_runtime_rs");
     let use_stmt = if needs_rosidl_types {
         "use crate::rosidl_runtime_rs;"
     } else {
@@ -351,8 +395,10 @@ fn test_clippy_no_warnings() -> Result<(), GeneratorError> {
 {}
 
 pub mod msg {{
+    {}
+
     pub mod rmw {{
-        {}
+        use super::*;
         {}
     }}
 

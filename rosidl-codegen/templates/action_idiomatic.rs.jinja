@@ -27,15 +27,8 @@ pub mod goal {
 
     impl Default for {{ action_name }}Goal {
         fn default() -> Self {
-            Self {
-                {% for field in goal_fields %}
-                {% if field.default_value != "" -%}
-                {{ field.name }}: {{ field.default_value }},
-                {% else -%}
-                {{ field.name }}: Default::default(),
-                {% endif -%}
-                {% endfor %}
-            }
+            // Leverage RMW message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::action::rmw::goal::{{ action_name }}Goal::default())
         }
     }
 
@@ -58,6 +51,21 @@ pub mod goal {
                 {{ field.name }}: idiomatic.{{ field.name }}.into(),
                 {% endfor %}
             }
+        }
+    }
+
+    // Message trait implementation for rosidl_runtime_rs
+    impl crate::rosidl_runtime_rs::Message for {{ action_name }}Goal {
+        type RmwMsg = crate::action::rmw::goal::{{ action_name }}Goal;
+
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+            // Convert from idiomatic to RMW format
+            std::borrow::Cow::Owned(msg_cow.into_owned().into())
+        }
+
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+            // Convert from RMW to idiomatic format
+            msg.into()
         }
     }
 }
@@ -85,15 +93,8 @@ pub mod result {
 
     impl Default for {{ action_name }}Result {
         fn default() -> Self {
-            Self {
-                {% for field in result_fields %}
-                {% if field.default_value != "" -%}
-                {{ field.name }}: {{ field.default_value }},
-                {% else -%}
-                {{ field.name }}: Default::default(),
-                {% endif -%}
-                {% endfor %}
-            }
+            // Leverage RMW message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::action::rmw::result::{{ action_name }}Result::default())
         }
     }
 
@@ -116,6 +117,21 @@ pub mod result {
                 {{ field.name }}: idiomatic.{{ field.name }}.into(),
                 {% endfor %}
             }
+        }
+    }
+
+    // Message trait implementation for rosidl_runtime_rs
+    impl crate::rosidl_runtime_rs::Message for {{ action_name }}Result {
+        type RmwMsg = crate::action::rmw::result::{{ action_name }}Result;
+
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+            // Convert from idiomatic to RMW format
+            std::borrow::Cow::Owned(msg_cow.into_owned().into())
+        }
+
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+            // Convert from RMW to idiomatic format
+            msg.into()
         }
     }
 }
@@ -143,15 +159,8 @@ pub mod feedback {
 
     impl Default for {{ action_name }}Feedback {
         fn default() -> Self {
-            Self {
-                {% for field in feedback_fields %}
-                {% if field.default_value != "" -%}
-                {{ field.name }}: {{ field.default_value }},
-                {% else -%}
-                {{ field.name }}: Default::default(),
-                {% endif -%}
-                {% endfor %}
-            }
+            // Leverage RMW message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::action::rmw::feedback::{{ action_name }}Feedback::default())
         }
     }
 
@@ -174,6 +183,21 @@ pub mod feedback {
                 {{ field.name }}: idiomatic.{{ field.name }}.into(),
                 {% endfor %}
             }
+        }
+    }
+
+    // Message trait implementation for rosidl_runtime_rs
+    impl crate::rosidl_runtime_rs::Message for {{ action_name }}Feedback {
+        type RmwMsg = crate::action::rmw::feedback::{{ action_name }}Feedback;
+
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+            // Convert from idiomatic to RMW format
+            std::borrow::Cow::Owned(msg_cow.into_owned().into())
+        }
+
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+            // Convert from RMW to idiomatic format
+            msg.into()
         }
     }
 }

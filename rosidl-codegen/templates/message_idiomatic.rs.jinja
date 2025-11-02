@@ -23,15 +23,8 @@ impl {{ message_name }} {
 
 impl Default for {{ message_name }} {
     fn default() -> Self {
-        Self {
-            {% for field in fields %}
-            {% if field.default_value != "" -%}
-            {{ field.name }}: {{ field.default_value }},
-            {% else -%}
-            {{ field.name }}: Default::default(),
-            {% endif -%}
-            {% endfor %}
-        }
+        // Leverage RMW message's C init function to get correct default values
+        <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::msg::rmw::{{ message_name }}::default())
     }
 }
 
@@ -53,5 +46,20 @@ impl From<{{ message_name }}> for crate::msg::rmw::{{ message_name }} {
             {{ field.name }}: idiomatic.{{ field.name }}.into(),
             {% endfor %}
         }
+    }
+}
+
+// Message trait implementation for rosidl_runtime_rs
+impl crate::rosidl_runtime_rs::Message for {{ message_name }} {
+    type RmwMsg = crate::msg::rmw::{{ message_name }};
+
+    fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
+        // Convert from idiomatic to RMW format
+        std::borrow::Cow::Owned(msg_cow.into_owned().into())
+    }
+
+    fn from_rmw_message(msg: Self::RmwMsg) -> Self {
+        // Convert from RMW to idiomatic format
+        msg.into()
     }
 }
