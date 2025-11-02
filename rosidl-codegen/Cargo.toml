@@ -17,6 +17,7 @@ thiserror = "2.0"
 tempfile = "3.0"
 criterion = "0.7"
 walkdir = "2.0"
+similar = "2.6"
 
 [[bench]]
 name = "generation_benchmark"
