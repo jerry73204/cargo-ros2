@@ -228,11 +228,27 @@ Content: fn main() { println!("test"); }
 
 ### Code Quality
 
+**IMPORTANT**: Always run format and lint before finishing your work:
+
 ```bash
-cargo fmt                     # Format code
-cargo clippy -- -D warnings   # Lint with warnings as errors
-cargo test                    # Run tests
+just quality      # Format code and check for linting issues (REQUIRED before committing)
 ```
+
+This ensures:
+- Code is consistently formatted with nightly rustfmt
+- All clippy warnings are fixed (treated as errors with `-D warnings`)
+- Zero warnings in the codebase
+
+Alternative commands:
+```bash
+just format               # Format code only
+just lint                 # Lint only
+just ci                   # Full CI workflow (format + lint + test)
+cargo fmt                 # Direct cargo command
+cargo clippy -- -D warnings   # Direct clippy
+```
+
+**Best Practice**: Run `just quality` at the end of each work session or before marking tasks as complete. This catches issues early and maintains high code quality standards.
 
 ### Documentation
 
@@ -265,6 +281,6 @@ MIT OR Apache-2.0 (to be decided - compatible with ROS 2 ecosystem)
 
 ---
 
-**Status**: Phase 2 Complete - Production-ready tools (2025-11-02)
-**Progress**: 11/20 subphases (55%) | 151 tests passing
-**Next**: Phase 3 - Production Features (see docs/ROADMAP.md)
+**Status**: Phase 3 Near Complete - Production Features (2025-11-04)
+**Progress**: 13.5/20 subphases (68%) | 190 tests passing | Zero warnings
+**Next**: Phase 3.4 - Enhanced Testing & Documentation, then Phase 4 - colcon Integration (see docs/ROADMAP.md)
