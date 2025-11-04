@@ -2,7 +2,7 @@
 
 ## Progress Summary
 
-**Overall Progress**: 15 of 21 subphases complete (71%) + Phase 1 & Phase 4 In Progress! 🚀
+**Overall Progress**: 18 of 22 subphases complete (82%) + Phase 1 & Phase 4 In Progress! 🚀
 
 | Phase                                 | Status           | Progress             |
 |---------------------------------------|------------------|----------------------|
@@ -10,9 +10,9 @@
 | Phase 1: Native Rust IDL Generator    | 🔄 In Progress   | 6/7 subphases        |
 | Phase 2: cargo-ros2 Tools             | ✅ Complete      | 2/2 subphases        |
 | Phase 3: Production Features          | ✅ Complete      | 4/4 subphases        |
-| Phase 4: colcon Integration & Release | 🔄 In Progress   | 1/3 subphases        |
+| Phase 4: colcon Integration & Release | 🔄 In Progress   | 3/6 subphases        |
 
-**Latest Achievement**: Path resolution fix COMPLETE! Fixed nested inline module path resolution in cargo-ros2-bindgen. RMW files now correctly placed in subdirectories (msg/rmw/, srv/rmw/, action/rmw/). Discovered remaining code generation issues (cross-package dependencies, imports, trait stubs) - tracked in new Subphase 1.7. 71% overall completion! 🎉
+**Latest Achievement**: Completed Subphases 4.1 (colcon integration), 4.1.1 (config.toml refactoring), and 4.1.2 (code generation bug fixes). Identified critical issue in 4.1.3 (package discovery from install/ doesn't work on first build). Solution documented using colcon's Python API for proper workspace discovery. 82% overall completion! 🎉
 
 ---
 
@@ -1799,11 +1799,227 @@ cargo build
 
 ---
 
-### Subphase 4.1.3: Transitive Dependency Discovery (1 week)
+### Subphase 4.1.3: Workspace Interface Package Discovery (1 week)
 
-**Status**: 🟡 ENHANCEMENT - Not blocking, but required for ergonomic DX
+**Status**: 🔴 CRITICAL ISSUE IDENTIFIED - Current implementation is flawed
 
 #### Problem Summary
+
+The current implementation of workspace interface package discovery (added in initial Subphase 4.1.3 work) has a critical chicken-and-egg problem:
+
+**Current Approach** (BROKEN):
+```rust
+// Discovers packages from install/ directory
+pub fn discover_interface_packages_from_workspace(install_base: &Path) -> Result<HashMap<String, PathBuf>> {
+    if !install_base.exists() {
+        return Ok(packages);  // ⚠️ PROBLEM: Returns empty on first build
+    }
+    // ... scans install/<package>/share/<package>/ for msg/srv/action dirs
+}
+```
+
+**Why This Fails**:
+1. On first build, the `install/` directory doesn't exist yet
+2. Function returns empty result → robot_interfaces not discovered
+3. cargo-ros2 doesn't generate bindings for it
+4. Build fails with "no matching package named `robot_interfaces` found"
+
+**Example Scenario**:
+```bash
+# Fresh workspace
+cd testing_workspaces/complex_workspace
+rm -rf build install
+
+# Try to build
+colcon build
+# FAILS: robot_interfaces not discovered because install/ doesn't exist yet!
+```
+
+**Root Cause**: We're trying to discover packages from the *output* of the build process, but we need them *before* the build starts.
+
+#### Proposed Solution: Use colcon's Package Discovery API
+
+Instead of manually scanning directories, delegate to colcon's existing package discovery infrastructure which:
+- ✅ Discovers packages from source directories (`src/`, or wherever they actually are)
+- ✅ Respects `COLCON_IGNORE` marker files automatically
+- ✅ Works before packages are installed
+- ✅ Handles all workspace layouts (not just `src/`)
+- ✅ Uses proper plugin-based discovery (ament_cmake, ament_python, ament_cargo)
+
+#### Implementation Approach
+
+**Option 1: Python Subprocess (Recommended)**
+
+Create a small Python script that uses colcon's API and outputs JSON:
+
+```python
+#!/usr/bin/env python3
+"""
+discover_packages.py - Use colcon API to find interface packages in workspace
+"""
+import sys
+import json
+from pathlib import Path
+from colcon_core.package_discovery import discover_packages
+from colcon_core.package_identification import identify
+
+def main(workspace_root):
+    # Use colcon's discovery system
+    packages = discover_packages(
+        paths=[workspace_root],
+        identification_extensions=None  # Use all registered extensions
+    )
+
+    interface_packages = []
+
+    for pkg_descriptor in packages:
+        pkg_path = Path(pkg_descriptor.path)
+
+        # Check if package has interface files
+        has_msg = (pkg_path / "msg").exists()
+        has_srv = (pkg_path / "srv").exists()
+        has_action = (pkg_path / "action").exists()
+
+        if has_msg or has_srv or has_action:
+            interface_packages.append({
+                "name": pkg_descriptor.name,
+                "path": str(pkg_path),
+                "type": pkg_descriptor.type,
+                "has_msg": has_msg,
+                "has_srv": has_srv,
+                "has_action": has_action,
+            })
+
+    # Output as JSON for Rust to consume
+    print(json.dumps(interface_packages, indent=2))
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: discover_packages.py <workspace_root>", file=sys.stderr)
+        sys.exit(1)
+
+    main(sys.argv[1])
+```
+
+**Rust Integration**:
+
+```rust
+// In cargo-ros2/src/package_discovery.rs
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use eyre::Result;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct InterfacePackageInfo {
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    pkg_type: String,
+    has_msg: bool,
+    has_srv: bool,
+    has_action: bool,
+}
+
+/// Discover interface packages from workspace using colcon's API
+///
+/// This uses colcon's package discovery system which:
+/// - Discovers from source directories (works on first build!)
+/// - Respects COLCON_IGNORE automatically
+/// - Handles all workspace layouts
+/// - Uses proper plugin-based discovery
+pub fn discover_interface_packages_via_colcon(
+    workspace_root: &Path,
+) -> Result<HashMap<String, PathBuf>> {
+    // Path to the Python discovery script (bundled with cargo-ros2)
+    let script_path = env!("CARGO_MANIFEST_DIR")
+        .join("scripts")
+        .join("discover_packages.py");
+
+    // Call Python script with workspace root
+    let output = Command::new("python3")
+        .arg(&script_path)
+        .arg(workspace_root)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eyre::bail!("Package discovery failed: {}", stderr);
+    }
+
+    // Parse JSON output
+    let stdout = String::from_utf8(output.stdout)?;
+    let packages: Vec<InterfacePackageInfo> = serde_json::from_str(&stdout)?;
+
+    // Convert to HashMap of name -> path
+    let mut result = HashMap::new();
+    for pkg in packages {
+        result.insert(pkg.name, PathBuf::from(pkg.path));
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore] // Requires colcon installation
+    fn test_discover_via_colcon() {
+        let workspace = PathBuf::from("testing_workspaces/complex_workspace");
+        let packages = discover_interface_packages_via_colcon(&workspace).unwrap();
+
+        // Should find robot_interfaces even before build
+        assert!(packages.contains_key("robot_interfaces"));
+    }
+}
+```
+
+**Update ament_build() to use new discovery**:
+
+```rust
+// In cargo-ros2/src/main.rs
+
+fn ament_build(/* ... */) -> Result<()> {
+    // OLD (BROKEN):
+    // let interface_pkgs = discover_interface_packages_from_workspace(workspace_install_dir)?;
+
+    // NEW (WORKING):
+    let workspace_root = install_base_abs
+        .parent()  // install/ -> workspace/
+        .and_then(|p| p.parent())  // workspace/ root
+        .ok_or_else(|| eyre::eyre!("Could not determine workspace root"))?;
+
+    let interface_pkgs = discover_interface_packages_via_colcon(workspace_root)?;
+
+    if ctx.verbose {
+        eprintln!("  Found {} interface packages via colcon", interface_pkgs.len());
+    }
+
+    // ... rest of ament_build unchanged
+}
+```
+
+**Option 2: Pure Rust (Alternative)**
+
+Use colcon's logic but reimplement in Rust:
+- Scan workspace root for packages (like colcon does)
+- Check for `package.xml` or `Cargo.toml`
+- Respect `COLCON_IGNORE` files
+- Check for msg/srv/action directories
+
+**Pros**: No Python dependency, faster
+**Cons**: Duplicates colcon logic, may miss edge cases, requires maintenance
+
+**Recommendation**: Use Option 1 (Python subprocess) because:
+1. ✅ Delegates to authoritative source (colcon itself)
+2. ✅ Automatically gets updates when colcon changes
+3. ✅ Respects all colcon configuration (environment, plugins)
+4. ✅ Minimal code to maintain (~50 lines Python, ~50 lines Rust)
+5. ✅ Performance impact negligible (only run once at build start)
 
 Currently, users must manually specify transitive ROS dependencies in Cargo.toml:
 
@@ -1822,6 +2038,191 @@ std_msgs = "*"            # ← Manual transitive dep
 
 This is error-prone and violates DRY principles. cargo-ros2 should automatically discover that `sensor_msgs` depends on `builtin_interfaces` by parsing the generated Cargo.toml files.
 
+#### Work Items
+
+**Phase 1: Create Python Discovery Script** (Day 1)
+- [ ] Create `cargo-ros2/scripts/discover_packages.py`
+- [ ] Import colcon_core.package_discovery
+- [ ] Implement package filtering for interface packages (msg/srv/action)
+- [ ] Output JSON format with package metadata
+- [ ] Add error handling for missing colcon installation
+- [ ] Test script standalone with complex_workspace
+
+**Phase 2: Rust Integration** (Days 2-3)
+- [ ] Add `discover_interface_packages_via_colcon()` to `package_discovery.rs`
+- [ ] Add serde structs for JSON deserialization
+- [ ] Handle subprocess execution and error cases
+- [ ] Add fallback to current method if Python/colcon unavailable
+- [ ] Update `ament_build()` to use new discovery method
+- [ ] Add verbose logging for discovery process
+
+**Phase 3: Testing** (Days 4-5)
+- [ ] Unit tests for JSON parsing
+- [ ] Integration test with complex_workspace
+- [ ] Test with COLCON_IGNORE present
+- [ ] Test with packages outside src/ directory
+- [ ] Test error handling (missing colcon, malformed JSON)
+- [ ] Verify first build now succeeds
+
+**Phase 4: Documentation** (Day 5)
+- [ ] Update TROUBLESHOOTING.md with colcon dependency
+- [ ] Document behavior when colcon not available
+- [ ] Add examples to README
+
+#### Testing Strategy
+
+**Unit Tests** (~5 tests):
+```rust
+#[test]
+fn test_parse_discovery_json() {
+    // Test JSON parsing with sample data
+}
+
+#[test]
+fn test_script_execution() {
+    // Test subprocess execution
+}
+
+#[test]
+fn test_fallback_to_install_discovery() {
+    // Test fallback when colcon unavailable
+}
+```
+
+**Integration Tests** (~3 tests):
+```rust
+#[test]
+fn test_discover_before_build() {
+    // Fresh workspace, no install/ directory
+    let workspace = create_test_workspace();
+    let packages = discover_interface_packages_via_colcon(&workspace).unwrap();
+    assert!(packages.contains_key("robot_interfaces"));
+}
+
+#[test]
+fn test_colcon_ignore_respected() {
+    // Workspace with COLCON_IGNORE markers
+    let packages = discover_interface_packages_via_colcon(&workspace).unwrap();
+    assert!(!packages.contains_key("ignored_package"));
+}
+
+#[test]
+fn test_non_src_layout() {
+    // Packages not in src/ directory
+    let packages = discover_interface_packages_via_colcon(&workspace).unwrap();
+    assert!(packages.contains_key("my_package"));
+}
+```
+
+#### Acceptance Criteria
+
+**Functional**:
+```bash
+# Test 1: First build of fresh workspace
+cd testing_workspaces/complex_workspace
+rm -rf build install
+colcon build
+# → robot_interfaces discovered from src/ ✓
+# → Bindings generated ✓
+# → Build succeeds ✓
+
+# Test 2: COLCON_IGNORE respected
+touch src/robot_interfaces/COLCON_IGNORE
+colcon build
+# → robot_interfaces NOT discovered ✓
+# → No bindings generated for it ✓
+
+# Test 3: Non-standard layout
+mkdir -p my_workspace/packages/interfaces
+# Create interface package in packages/ instead of src/
+colcon build --base-paths my_workspace/packages
+# → Package discovered ✓
+```
+
+**Performance**:
+```bash
+# Discovery overhead should be minimal (<1s)
+time python3 scripts/discover_packages.py testing_workspaces/complex_workspace
+# → <1 second ✓
+```
+
+#### Benefits
+
+✅ **Works on first build** - discovers from source directories
+✅ **Respects colcon conventions** - COLCON_IGNORE, all layouts
+✅ **No directory assumptions** - packages can be anywhere
+✅ **Plugin-based** - supports all package types (ament_cmake, ament_python, ament_cargo)
+✅ **Authoritative source** - uses colcon itself, not reimplementation
+✅ **Minimal maintenance** - colcon updates automatically propagate
+✅ **Low performance cost** - ~1s overhead at build start
+
+#### Files to Create/Modify
+
+**New Files**:
+- `cargo-ros2/scripts/discover_packages.py` (~60 lines)
+
+**Modified Files**:
+- `cargo-ros2/src/package_discovery.rs` (~80 lines added)
+- `cargo-ros2/src/main.rs` (~10 lines changed in ament_build())
+- `cargo-ros2/Cargo.toml` (add serde_json dependency if not present)
+
+**Test Files**:
+- `cargo-ros2/tests/package_discovery_tests.rs` (~150 lines)
+
+**Total**: ~300 lines of new code
+
+#### Alternative: Pure Rust Implementation (Not Recommended)
+
+If avoiding Python dependency is critical, could reimplement colcon's discovery logic in Rust:
+
+```rust
+pub fn discover_interface_packages_rust(workspace_root: &Path) -> Result<HashMap<String, PathBuf>> {
+    let mut packages = HashMap::new();
+
+    fn walk_dir(dir: &Path, packages: &mut HashMap<String, PathBuf>) -> Result<()> {
+        // Skip COLCON_IGNORE directories
+        if dir.join("COLCON_IGNORE").exists() {
+            return Ok(());
+        }
+
+        // Check for package.xml (ament packages)
+        if dir.join("package.xml").exists() {
+            // Parse package name from package.xml
+            // Check for msg/srv/action directories
+            // Add to packages if interface package
+        }
+
+        // Recursively walk subdirectories
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk_dir(&path, packages)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    walk_dir(workspace_root, &mut packages)?;
+    Ok(packages)
+}
+```
+
+**Pros**: No Python dependency
+**Cons**:
+- Duplicates colcon logic (~200 lines)
+- May diverge from colcon behavior
+- Requires maintenance when colcon changes
+- Won't use colcon plugins
+
+**Recommendation**: Use Python subprocess approach unless there's a hard requirement to avoid Python.
+
+---
+
+### Subphase 4.1.4: Transitive Dependency Discovery (Future Work)
+
+**Status**: 📋 PLANNED - Future enhancement for ergonomic DX
+
 #### Current Behavior
 
 1. User adds `sensor_msgs = "*"` to Cargo.toml
@@ -1830,17 +2231,19 @@ This is error-prone and violates DRY principles. cargo-ros2 should automatically
 4. Cargo tries to fetch builtin_interfaces from crates.io
 5. **BUILD FAILS** - builtin_interfaces not in config.toml patches
 
+**Note**: This is a separate issue from Subphase 4.1.3 (workspace interface discovery). This subphase is about automatically discovering dependencies *within* generated packages, not discovering packages in the workspace.
+
 #### Desired Behavior
 
 1. User adds `sensor_msgs = "*"` to Cargo.toml
-2. cargo-ros2 discovers sensor_msgs depends on builtin_interfaces
+2. cargo-ros2 discovers sensor_msgs depends on builtin_interfaces (by parsing generated Cargo.toml)
 3. cargo-ros2 generates bindings for BOTH packages
 4. config.toml patches BOTH packages
 5. **BUILD SUCCEEDS** - all deps patched
 
 #### Solution Design
 
-**Algorithm**:
+**Algorithm** (BFS for transitive dependencies):
 ```rust
 fn discover_all_dependencies(user_deps: &[String]) -> Result<Vec<String>> {
     let mut to_process: VecDeque<String> = user_deps.iter().cloned().collect();
@@ -2133,27 +2536,37 @@ cargo ros2 build
 
 ## Current Status
 
-**Phase**: Phase 1 & Phase 4 In Progress (15/21 subphases complete - 71%) 🚀
+**Phase**: Phase 1 & Phase 4 In Progress (18/22 subphases complete - 82%) 🚀
 
 **Completed**:
 - ✅ Phase 0 Complete (all 3 subphases)
 - ✅ Phase 1 Subphases 1.1-1.6 Complete - Native Rust IDL Generator
 - ✅ Phase 2 Complete (all 2 subphases) - cargo-ros2 Tools
 - ✅ Phase 3 Complete (all 4 subphases) - Production Features
-- ✅ Phase 4.1 Complete - colcon-ros-cargo Integration
+- ✅ Phase 4.1 Complete - colcon-ros-cargo Integration (rewrote to use cargo-ros2)
+- ✅ Phase 4.1.1 Complete - config.toml Management Refactoring (centralized in cargo-ros2)
+- ✅ Phase 4.1.2 Complete - Code Generation Bug Fixes (Clone bounds, snake_case modules)
 
 **In Progress**:
-- 🔧 Phase 1, Subphase 1.7 - Code Generation Fixes (cross-package deps, imports, trait stubs)
+- 🔧 Phase 1, Subphase 1.7 - Code Generation Fixes (remaining issues)
   - Path resolution fix completed (2025-11-04)
   - Discovered 3 remaining code generation issues during complex_workspace testing
   - Fix locations identified in cargo-ros2-bindgen and rosidl-codegen templates
   - See Subphase 1.7 for detailed work items
 
-**Next Tasks** (Parallel):
-1. Complete Subphase 1.7 (Code Generation Fixes)
-2. Then Phase 4, Subphase 4.2 (Multi-Distro Support)
+**Documented but Not Implemented**:
+- 📋 Phase 4.1.3 - Workspace Interface Package Discovery
+  - Critical issue identified: current implementation discovers from install/ which doesn't exist on first build
+  - Solution documented: use colcon's Python API for proper source directory discovery
+  - Full implementation plan with code examples in Subphase 4.1.3 section
+  - Ready for implementation when needed
 
-**Date**: 2025-11-04
+**Next Tasks**:
+1. Complete Subphase 1.7 (Code Generation Fixes) - blocking for complex_workspace
+2. Implement Subphase 4.1.3 (Package Discovery via colcon) - needed for first build
+3. Then Phase 4, Subphase 4.2 (Multi-Distro Support)
+
+**Date**: 2025-11-05
 
 ---
 
