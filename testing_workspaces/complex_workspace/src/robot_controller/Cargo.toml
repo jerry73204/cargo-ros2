@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Standard ROS message packages - cargo-ros2 will generate bindings
+builtin_interfaces = "*"
 std_msgs = "*"
 geometry_msgs = "*"
 sensor_msgs = "*"

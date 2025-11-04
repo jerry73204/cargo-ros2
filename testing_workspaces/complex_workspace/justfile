@@ -1,5 +1,12 @@
 # Build the workspace
 build:
+	#!/usr/bin/env bash
+	set -e
+	source /opt/ros/jazzy/setup.bash
+	# Source workspace if it exists (for incremental builds with dependencies)
+	if [ -f install/setup.bash ]; then
+		source install/setup.bash
+	fi
 	colcon build --symlink-install
 
 # Clean build artifacts
