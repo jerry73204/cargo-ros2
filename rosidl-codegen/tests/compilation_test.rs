@@ -123,6 +123,27 @@ fn cargo_available() -> bool {
     Command::new("cargo").arg("--version").output().is_ok()
 }
 
+/// Convert UpperCamelCase to snake_case for module names
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut prev_is_uppercase = false;
+
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 && !prev_is_uppercase {
+                result.push('_');
+            }
+            result.push(ch.to_lowercase().next().unwrap());
+            prev_is_uppercase = true;
+        } else {
+            result.push(ch);
+            prev_is_uppercase = false;
+        }
+    }
+
+    result
+}
+
 #[test]
 fn test_simple_message_compiles() -> Result<(), GeneratorError> {
     if !cargo_available() {
@@ -133,7 +154,9 @@ fn test_simple_message_compiles() -> Result<(), GeneratorError> {
     let msg_def = "int32 x\nfloat64 y\nstring name\n";
     let msg = parse_message(msg_def).unwrap();
 
-    let result = generate_message_package("test_msgs", "SimpleMsg", &msg, &HashSet::new())?;
+    let message_name = "SimpleMsg";
+    let module_name = to_snake_case(message_name);
+    let result = generate_message_package("test_msgs", message_name, &msg, &HashSet::new())?;
 
     // Create temp directory for test package
     let temp_dir = TempDir::new().unwrap();
@@ -148,36 +171,33 @@ fn test_simple_message_compiles() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    // Create a simple lib.rs that includes the generated code
-    // Add use statement if generated code uses rosidl_runtime_rs types
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
-        || result.message_idiomatic.contains("rosidl_runtime_rs");
-    let use_stmt = if needs_rosidl_types {
-        "use crate::rosidl_runtime_rs;"
-    } else {
-        ""
-    };
-
     let lib_rs = format!(
         r#"
 {}
 
-// Auto-generated message types
-pub mod msg {{
-    {}
+// FFI layer at package root (conflict-free)
+pub mod ffi {{
+    pub mod msg {{
+        pub mod {} {{
+            {}
+        }}
 
-    pub mod rmw {{
-        use super::*;
-        {}
+        // Re-export for convenience
+        pub use {}::{};
     }}
+}}
 
+// Idiomatic layer at package root
+pub mod msg {{
     // Idiomatic types
     {}
 }}
 "#,
         create_rosidl_runtime_stub(),
-        use_stmt,
+        module_name,
         result.message_rmw,
+        module_name,
+        message_name,
         result.message_idiomatic
     );
 
@@ -212,7 +232,9 @@ fn test_message_with_arrays_compiles() -> Result<(), GeneratorError> {
     let msg_def = "int32[5] small_array\nint32[32] large_array\n";
     let msg = parse_message(msg_def).unwrap();
 
-    let result = generate_message_package("test_msgs", "ArrayMsg", &msg, &HashSet::new())?;
+    let message_name = "ArrayMsg";
+    let module_name = to_snake_case(message_name);
+    let result = generate_message_package("test_msgs", message_name, &msg, &HashSet::new())?;
 
     // Create temp directory for test package
     let temp_dir = TempDir::new().unwrap();
@@ -227,32 +249,33 @@ fn test_message_with_arrays_compiles() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
-        || result.message_idiomatic.contains("rosidl_runtime_rs");
-    let use_stmt = if needs_rosidl_types {
-        "use crate::rosidl_runtime_rs;"
-    } else {
-        ""
-    };
-
     let lib_rs = format!(
         r#"
 {}
 
-pub mod msg {{
-    {}
+// FFI layer at package root (conflict-free)
+pub mod ffi {{
+    pub mod msg {{
+        pub mod {} {{
+            {}
+        }}
 
-    pub mod rmw {{
-        use super::*;
-        {}
+        // Re-export for convenience
+        pub use {}::{};
     }}
+}}
 
+// Idiomatic layer at package root
+pub mod msg {{
+    // Idiomatic types
     {}
 }}
 "#,
         create_rosidl_runtime_stub(),
-        use_stmt,
+        module_name,
         result.message_rmw,
+        module_name,
+        message_name,
         result.message_idiomatic
     );
 
@@ -286,7 +309,9 @@ fn test_check_no_warnings() -> Result<(), GeneratorError> {
     let msg_def = "int32 x\nfloat64 y\n";
     let msg = parse_message(msg_def).unwrap();
 
-    let result = generate_message_package("test_msgs", "Point", &msg, &HashSet::new())?;
+    let message_name = "Point";
+    let module_name = to_snake_case(message_name);
+    let result = generate_message_package("test_msgs", message_name, &msg, &HashSet::new())?;
 
     // Create temp directory
     let temp_dir = TempDir::new().unwrap();
@@ -300,31 +325,35 @@ fn test_check_no_warnings() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs");
-    let use_stmt = if needs_rosidl_types {
-        "use crate::rosidl_runtime_rs;"
-    } else {
-        ""
-    };
-
     let lib_rs = format!(
         r#"
 #![deny(warnings)]
 
 {}
 
-pub mod msg {{
-    pub mod rmw {{
-        {}
-        {}
-    }}
+// FFI layer at package root (conflict-free)
+pub mod ffi {{
+    pub mod msg {{
+        pub mod {} {{
+            {}
+        }}
 
+        // Re-export for convenience
+        pub use {}::{};
+    }}
+}}
+
+// Idiomatic layer at package root
+pub mod msg {{
+    // Idiomatic types
     {}
 }}
 "#,
         create_rosidl_runtime_stub(),
-        use_stmt,
+        module_name,
         result.message_rmw,
+        module_name,
+        message_name,
         result.message_idiomatic
     );
 
@@ -368,7 +397,9 @@ fn test_clippy_no_warnings() -> Result<(), GeneratorError> {
     let msg_def = "int32 value\nstring name\n";
     let msg = parse_message(msg_def).unwrap();
 
-    let result = generate_message_package("test_msgs", "TestMsg", &msg, &HashSet::new())?;
+    let message_name = "TestMsg";
+    let module_name = to_snake_case(message_name);
+    let result = generate_message_package("test_msgs", message_name, &msg, &HashSet::new())?;
 
     // Create temp directory
     let temp_dir = TempDir::new().unwrap();
@@ -382,32 +413,33 @@ fn test_clippy_no_warnings() -> Result<(), GeneratorError> {
     let src_dir = pkg_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let needs_rosidl_types = result.message_rmw.contains("rosidl_runtime_rs")
-        || result.message_idiomatic.contains("rosidl_runtime_rs");
-    let use_stmt = if needs_rosidl_types {
-        "use crate::rosidl_runtime_rs;"
-    } else {
-        ""
-    };
-
     let lib_rs = format!(
         r#"
 {}
 
-pub mod msg {{
-    {}
+// FFI layer at package root (conflict-free)
+pub mod ffi {{
+    pub mod msg {{
+        pub mod {} {{
+            {}
+        }}
 
-    pub mod rmw {{
-        use super::*;
-        {}
+        // Re-export for convenience
+        pub use {}::{};
     }}
+}}
 
+// Idiomatic layer at package root
+pub mod msg {{
+    // Idiomatic types
     {}
 }}
 "#,
         create_rosidl_runtime_stub(),
-        use_stmt,
+        module_name,
         result.message_rmw,
+        module_name,
+        message_name,
         result.message_idiomatic
     );
 

@@ -80,36 +80,46 @@ fn test_end_to_end_package_generation() {
     let msg_dir = pkg_dir.join("src").join("msg");
     assert!(msg_dir.exists(), "msg directory should exist");
     assert!(
-        msg_dir.join("point_rmw.rs").exists(),
-        "RMW message should exist"
-    );
-    assert!(
         msg_dir.join("point_idiomatic.rs").exists(),
         "Idiomatic message should exist"
+    );
+
+    // Verify FFI directory structure at package level
+    let ffi_msg_dir = pkg_dir.join("src").join("ffi").join("msg");
+    assert!(ffi_msg_dir.exists(), "ffi/msg directory should exist");
+    assert!(
+        ffi_msg_dir.join("point_rmw.rs").exists(),
+        "FFI message should exist in ffi/msg subdirectory"
     );
 
     // Verify generated service files
     let srv_dir = pkg_dir.join("src").join("srv");
     assert!(srv_dir.exists(), "srv directory should exist");
     assert!(
-        srv_dir.join("addtwoints_rmw.rs").exists(),
-        "RMW service should exist"
-    );
-    assert!(
         srv_dir.join("addtwoints_idiomatic.rs").exists(),
         "Idiomatic service should exist"
+    );
+
+    let ffi_srv_dir = pkg_dir.join("src").join("ffi").join("srv");
+    assert!(ffi_srv_dir.exists(), "ffi/srv directory should exist");
+    assert!(
+        ffi_srv_dir.join("addtwoints_rmw.rs").exists(),
+        "FFI service should exist in ffi/srv subdirectory"
     );
 
     // Verify generated action files
     let action_dir = pkg_dir.join("src").join("action");
     assert!(action_dir.exists(), "action directory should exist");
     assert!(
-        action_dir.join("fibonacci_rmw.rs").exists(),
-        "RMW action should exist"
-    );
-    assert!(
         action_dir.join("fibonacci_idiomatic.rs").exists(),
         "Idiomatic action should exist"
+    );
+
+    let ffi_action_dir = pkg_dir.join("src").join("ffi").join("action");
+    assert!(ffi_action_dir.exists(), "ffi/action directory should exist");
+    assert!(
+        ffi_action_dir.join("fibonacci_rmw.rs").exists(),
+        "FFI action should exist in ffi/action subdirectory"
     );
 }
 

@@ -1,22 +1,87 @@
 // Auto-generated ROS 2 Rust bindings
 
+// Stub trait definitions for rosidl_runtime_rs
+pub mod rosidl_runtime_rs {
+    pub trait SequenceAlloc {
+        fn sequence_init(seq: &mut Sequence<Self>, size: usize) -> bool where Self: Sized;
+        fn sequence_fini(seq: &mut Sequence<Self>) where Self: Sized;
+        fn sequence_copy(in_seq: &Sequence<Self>, out_seq: &mut Sequence<Self>) -> bool where Self: Sized;
+    }
+
+    pub trait Message {
+        type RmwMsg;
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> where Self: Sized;
+        fn from_rmw_message(msg: Self::RmwMsg) -> Self where Self: Sized;
+    }
+
+    pub trait RmwMessage where Self: Sized {
+        const TYPE_NAME: &'static str;
+        fn get_type_support() -> *const std::ffi::c_void;
+    }
+
+    pub trait Service {
+        type Request;
+        type Response;
+        fn get_type_support() -> *const std::ffi::c_void;
+    }
+
+    pub trait Action {
+        type Goal;
+        type Result;
+        type Feedback;
+    }
+
+    #[repr(C)]
+    pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }
+}
+
+// FFI layer at package root (conflict-free)
+pub mod ffi {
+    use super::rosidl_runtime_rs;
+
+    {% if has_messages %}
+    pub mod msg {
+        use super::*;
+        pub mod rmw;
+        pub use rmw::*;
+    }
+    {% endif %}
+
+    {% if has_services %}
+    pub mod srv {
+        use super::*;
+        pub mod rmw;
+        pub use rmw::*;
+    }
+    {% endif %}
+
+    {% if has_actions %}
+    pub mod action {
+        use super::*;
+        pub mod rmw;
+        pub use rmw::*;
+    }
+    {% endif %}
+}
+
+// Idiomatic layer at package root
 {% if has_messages %}
 pub mod msg {
-    pub mod rmw;
-    pub use rmw::*;
+    use super::rosidl_runtime_rs;
+    // Idiomatic message modules will be added here
 }
 {% endif %}
 
 {% if has_services %}
 pub mod srv {
-    pub mod rmw;
-    pub use rmw::*;
+    use super::rosidl_runtime_rs;
+    // Idiomatic service modules will be added here
 }
 {% endif %}
 
 {% if has_actions %}
 pub mod action {
-    pub mod rmw;
-    pub use rmw::*;
+    use super::rosidl_runtime_rs;
+    // Idiomatic action modules will be added here
 }
 {% endif %}

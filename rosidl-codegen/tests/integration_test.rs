@@ -102,11 +102,11 @@ fn test_generate_message_with_dependencies() -> Result<(), GeneratorError> {
     assert!(result.cargo_toml.contains("geometry_msgs"));
     assert!(result.cargo_toml.contains("std_msgs"));
 
-    // Verify namespaced types in RMW layer
+    // Verify namespaced types in RMW layer (FFI hierarchy: pkg::ffi::msg::Type)
     assert!(result
         .message_rmw
-        .contains("geometry_msgs::msg::rmw::Point"));
-    assert!(result.message_rmw.contains("std_msgs::msg::rmw::Header"));
+        .contains("geometry_msgs::ffi::msg::Point"));
+    assert!(result.message_rmw.contains("std_msgs::ffi::msg::Header"));
 
     // Verify namespaced types in idiomatic layer
     assert!(result
@@ -212,10 +212,10 @@ fn test_generate_service_with_dependencies() -> Result<(), GeneratorError> {
     // Verify dependencies are added to Cargo.toml
     assert!(result.cargo_toml.contains("geometry_msgs"));
 
-    // Verify namespaced types in RMW layer
+    // Verify namespaced types in RMW layer (FFI hierarchy: pkg::ffi::msg::Type)
     assert!(result
         .service_rmw
-        .contains("geometry_msgs::msg::rmw::Point"));
+        .contains("geometry_msgs::ffi::msg::Point"));
 
     // Verify namespaced types in idiomatic layer
     assert!(result
@@ -289,8 +289,8 @@ fn test_generate_action_with_dependencies() -> Result<(), GeneratorError> {
     // Verify dependencies are added to Cargo.toml
     assert!(result.cargo_toml.contains("geometry_msgs"));
 
-    // Verify namespaced types in RMW layer
-    assert!(result.action_rmw.contains("geometry_msgs::msg::rmw::Point"));
+    // Verify namespaced types in RMW layer (FFI hierarchy: pkg::ffi::msg::Type)
+    assert!(result.action_rmw.contains("geometry_msgs::ffi::msg::Point"));
 
     // Verify namespaced types in idiomatic layer
     assert!(result
