@@ -118,22 +118,63 @@ cargo ros2 build
 
 ## Implementation Status
 
-**Current Phase**: Design & Documentation (Phase 0)
+**Current Phase**: Phase 2 Complete! ✅
 
-See `docs/ROADMAP.md` for detailed implementation plan.
+**Completed**:
+- ✅ **Phase 0**: Project Preparation (3/3 subphases)
+- ✅ **Phase 1**: Native Rust IDL Generator (6/6 subphases)
+  - Full rosidl parser (messages, services, actions)
+  - Askama-based code generator
+  - FFI bindings and runtime traits
+  - 80 tests passing
+- ✅ **Phase 2**: cargo-ros2 Tools (2/2 subphases)
+  - **cargo-ros2-bindgen**: Standalone binding generator (13 tests)
+  - **cargo-ros2**: Complete build workflow with caching (26 tests)
+  - 151 total tests passing
+
+**What Works Now**:
+- Generate Rust bindings for any ROS 2 interface package
+- Discover packages from system installation
+- Intelligent SHA256-based caching
+- Automatic .cargo/config.toml patching
+- Complete CLI: `build`, `check`, `clean`
+
+**Next**: Phase 3 (Production Features) - See `docs/ROADMAP.md` for details.
 
 ## Quick Reference
 
-### Commands (Future)
+### Commands
 
+**cargo-ros2-bindgen** (standalone tool):
 ```bash
-cargo ros2 build                        # Build with binding generation
-cargo ros2 clean                        # Clean bindings + artifacts
-cargo ros2 check                        # Fast check (reuses bindings)
+# Generate bindings for a single package
+cargo-ros2-bindgen --package std_msgs --output target/ros2_bindings
+
+# With verbose output
+cargo-ros2-bindgen --package geometry_msgs --output ./bindings --verbose
+
+# Using direct path (bypasses ament index)
+cargo-ros2-bindgen --package my_msgs --output ./out --package-path /path/to/share
+```
+
+**cargo-ros2** (main build tool):
+```bash
+cargo ros2 build                        # ✅ Build with binding generation
+cargo ros2 build --verbose              # ✅ Verbose output
+cargo ros2 build --bindings-only        # ✅ Generate bindings only (no build)
+
+cargo ros2 check                        # ✅ Fast check (reuses bindings)
+cargo ros2 check --bindings-only        # ✅ Generate bindings only (no check)
+
+cargo ros2 clean                        # ✅ Clean bindings + cache
+```
+
+**Future enhancements**:
+```bash
 cargo ros2 test                         # Test with bindings
 cargo ros2 cache --list                 # Show cached bindings
 cargo ros2 cache --rebuild              # Force regeneration
-cargo ros2 ament-build --install-base <path>  # Generate + build + install (with cargo-ament-build)
+cargo ros2 ament-build --install-base <path>  # Generate + build + install (Phase 3+)
 ```
 
 ### Key Files
@@ -224,5 +265,6 @@ MIT OR Apache-2.0 (to be decided - compatible with ROS 2 ecosystem)
 
 ---
 
-**Status**: Design phase (2025-01-29)
-**Next**: Implement Phase 1 MVP (see docs/ROADMAP.md)
+**Status**: Phase 2 Complete - Production-ready tools (2025-11-02)
+**Progress**: 11/20 subphases (55%) | 151 tests passing
+**Next**: Phase 3 - Production Features (see docs/ROADMAP.md)
