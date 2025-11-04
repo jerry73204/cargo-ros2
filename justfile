@@ -30,10 +30,11 @@ check:
 doc:
 	cargo doc --no-deps --profile dev-release
 
-# Install cargo-ros2 and cargo-ros2-bindgen
+# Install cargo-ros2 (cargo) and colcon-ros-cargo (pip)
 install:
 	cargo install --path cargo-ros2
 	cargo install --path cargo-ros2-bindgen
+	pip install --break-system-packages --editable colcon-ros-cargo
 
 # Run all quality checks (format + lint)
 quality: format lint
