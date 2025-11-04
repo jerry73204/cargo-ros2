@@ -13,6 +13,14 @@ use rosidl_codegen::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// Submodule name for C-compatible FFI layer (ROS Middleware layer).
+/// This is the nested inline module that contains RMW (Raw Message Wire) format types.
+///
+/// The dual-layer architecture is:
+/// - `pkg::msg::rmw::Type` - C-compatible FFI structs for interop with ROS C libraries
+/// - `pkg::msg::Type` - Idiomatic Rust wrappers with safe types (String, Vec, etc.)
+const RMW_SUBMODULE: &str = "rmw";
+
 /// Generated Rust package structure
 #[derive(Debug)]
 pub struct GeneratedRustPackage {
@@ -123,11 +131,15 @@ fn write_generated_package(
     let msg_dir = output_dir.join("src").join("msg");
     std::fs::create_dir_all(&msg_dir)?;
 
-    // Write RMW message
-    let rmw_file = msg_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Create RMW subdirectory for nested inline module
+    let rmw_dir = msg_dir.join(RMW_SUBMODULE);
+    std::fs::create_dir_all(&rmw_dir)?;
+
+    // Write RMW message to msg/rmw/ subdirectory
+    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.message_rmw)?;
 
-    // Write idiomatic message
+    // Write idiomatic message to msg/ directory
     let idiomatic_file = msg_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.message_idiomatic)?;
 
@@ -143,11 +155,15 @@ fn write_generated_service(
     let srv_dir = output_dir.join("src").join("srv");
     std::fs::create_dir_all(&srv_dir)?;
 
-    // Write RMW service
-    let rmw_file = srv_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Create RMW subdirectory for nested inline module
+    let rmw_dir = srv_dir.join(RMW_SUBMODULE);
+    std::fs::create_dir_all(&rmw_dir)?;
+
+    // Write RMW service to srv/rmw/ subdirectory
+    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.service_rmw)?;
 
-    // Write idiomatic service
+    // Write idiomatic service to srv/ directory
     let idiomatic_file = srv_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.service_idiomatic)?;
 
@@ -163,11 +179,15 @@ fn write_generated_action(
     let action_dir = output_dir.join("src").join("action");
     std::fs::create_dir_all(&action_dir)?;
 
-    // Write RMW action
-    let rmw_file = action_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Create RMW subdirectory for nested inline module
+    let rmw_dir = action_dir.join(RMW_SUBMODULE);
+    std::fs::create_dir_all(&rmw_dir)?;
+
+    // Write RMW action to action/rmw/ subdirectory
+    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.action_rmw)?;
 
-    // Write idiomatic action
+    // Write idiomatic action to action/ directory
     let idiomatic_file = action_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.action_idiomatic)?;
 
@@ -199,15 +219,19 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     if !package.interfaces.messages.is_empty() {
         lib_rs.push_str("pub mod msg {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str("    pub mod rmw {\n");
+        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
         lib_rs.push_str("        use super::*;\n");
         for msg_name in &package.interfaces.messages {
             let module_name = msg_name.to_lowercase();
+            // Files are in src/msg/{RMW_SUBMODULE}/, inline module context is also msg/{RMW_SUBMODULE}/
+            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
             lib_rs.push_str(&format!("        pub mod {};\n", module_name));
         }
         lib_rs.push_str("    }\n\n");
         for msg_name in &package.interfaces.messages {
             let module_name = msg_name.to_lowercase();
+            // Files are in src/msg/, inline module context is also msg/
+            lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
         }
         lib_rs.push_str("}\n\n");
@@ -217,15 +241,19 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     if !package.interfaces.services.is_empty() {
         lib_rs.push_str("pub mod srv {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str("    pub mod rmw {\n");
+        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
         lib_rs.push_str("        use super::*;\n");
         for srv_name in &package.interfaces.services {
             let module_name = srv_name.to_lowercase();
+            // Files are in src/srv/{RMW_SUBMODULE}/, inline module context is also srv/{RMW_SUBMODULE}/
+            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
             lib_rs.push_str(&format!("        pub mod {};\n", module_name));
         }
         lib_rs.push_str("    }\n\n");
         for srv_name in &package.interfaces.services {
             let module_name = srv_name.to_lowercase();
+            // Files are in src/srv/, inline module context is also srv/
+            lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
         }
         lib_rs.push_str("}\n\n");
@@ -235,15 +263,19 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     if !package.interfaces.actions.is_empty() {
         lib_rs.push_str("pub mod action {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str("    pub mod rmw {\n");
+        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
         lib_rs.push_str("        use super::*;\n");
         for action_name in &package.interfaces.actions {
             let module_name = action_name.to_lowercase();
+            // Files are in src/action/{RMW_SUBMODULE}/, inline module context is also action/{RMW_SUBMODULE}/
+            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
             lib_rs.push_str(&format!("        pub mod {};\n", module_name));
         }
         lib_rs.push_str("    }\n\n");
         for action_name in &package.interfaces.actions {
             let module_name = action_name.to_lowercase();
+            // Files are in src/action/, inline module context is also action/
+            lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
         }
         lib_rs.push_str("}\n");
@@ -260,6 +292,9 @@ fn generate_cargo_toml(output_dir: &Path, package_name: &str) -> Result<()> {
 name = "{}"
 version = "0.1.0"
 edition = "2021"
+
+# Standalone package (not part of parent workspace)
+[workspace]
 
 [dependencies]
 serde = {{ version = "1.0", features = ["derive"] }}
