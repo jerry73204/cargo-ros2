@@ -366,6 +366,90 @@ fn ament_build(
         }
 
         all_patches.extend(workspace_pkgs);
+
+        // 1a2. Discover interface packages from workspace install directory
+        if ctx.verbose {
+            eprintln!("  Discovering interface packages from workspace...");
+        }
+
+        // install_base_abs points to install/<package_name>, but we need install/ to find other packages
+        let workspace_install_dir = install_base_abs.parent().ok_or_else(|| {
+            eyre::eyre!("Could not determine workspace install directory from install_base")
+        })?;
+
+        let interface_pkgs =
+            cargo_ros2::package_discovery::discover_interface_packages_from_workspace(
+                workspace_install_dir,
+            )?;
+
+        if ctx.verbose {
+            eprintln!("    Found {} interface packages", interface_pkgs.len());
+        }
+
+        // Generate bindings for interface packages that need them
+        if !interface_pkgs.is_empty() {
+            use std::process::Command;
+
+            if ctx.verbose {
+                eprintln!("  Generating bindings for interface packages...");
+            }
+
+            for pkg_name in interface_pkgs.keys() {
+                // Check if bindings already exist
+                let binding_path = ctx.output_dir.join(pkg_name);
+
+                // Generate bindings using cargo-ros2-bindgen
+                if ctx.verbose {
+                    eprintln!("    Generating bindings for {}...", pkg_name);
+                }
+
+                // Temporarily add package-specific prefix to AMENT_PREFIX_PATH so bindgen can find it
+                let old_ament_path = std::env::var("AMENT_PREFIX_PATH").unwrap_or_default();
+                // Package prefix is install/<package_name>
+                let package_prefix = workspace_install_dir.join(pkg_name);
+                let new_ament_path = if old_ament_path.is_empty() {
+                    package_prefix.display().to_string()
+                } else {
+                    format!("{}:{}", package_prefix.display(), old_ament_path)
+                };
+
+                // Call cargo-ros2-bindgen with modified AMENT_PREFIX_PATH
+                let bindgen_result = Command::new("cargo-ros2-bindgen")
+                    .arg("--package")
+                    .arg(pkg_name)
+                    .arg("--output")
+                    .arg(&ctx.output_dir)
+                    .env("AMENT_PREFIX_PATH", &new_ament_path)
+                    .status();
+
+                // Restore old AMENT_PREFIX_PATH
+                if old_ament_path.is_empty() {
+                    std::env::remove_var("AMENT_PREFIX_PATH");
+                } else {
+                    std::env::set_var("AMENT_PREFIX_PATH", old_ament_path);
+                }
+
+                match bindgen_result {
+                    Ok(status) if status.success() => {
+                        if ctx.verbose {
+                            eprintln!("      ✓ Generated bindings for {}", pkg_name);
+                        }
+                        // Add to patches
+                        all_patches.insert(pkg_name.clone(), binding_path);
+                    }
+                    Ok(status) => {
+                        eprintln!(
+                            "      ✗ Failed to generate bindings for {} (exit code: {})",
+                            pkg_name,
+                            status.code().unwrap_or(-1)
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("      ✗ Failed to execute cargo-ros2-bindgen: {}", e);
+                    }
+                }
+            }
+        }
     }
 
     // 1b. Installed ament packages

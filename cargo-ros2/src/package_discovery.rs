@@ -147,6 +147,53 @@ pub fn discover_installed_ament_packages() -> Result<HashMap<String, PathBuf>> {
     Ok(packages)
 }
 
+/// Discover interface packages from workspace install directory
+///
+/// Scans the install directory for packages with .msg/.srv/.action files.
+/// Returns a mapping of package name -> share directory path.
+///
+/// # Arguments
+/// * `install_base` - Install directory path (e.g., "install/")
+///
+/// # Returns
+/// HashMap of package name -> absolute path to package share directory
+pub fn discover_interface_packages_from_workspace(
+    install_base: &Path,
+) -> Result<HashMap<String, PathBuf>> {
+    let mut packages = HashMap::new();
+
+    if !install_base.exists() {
+        return Ok(packages);
+    }
+
+    // Iterate through packages in install directory
+    if let Ok(entries) = fs::read_dir(install_base) {
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                continue;
+            }
+
+            let package_name = entry.file_name().to_string_lossy().to_string();
+            let share_dir = entry.path().join("share").join(&package_name);
+
+            if !share_dir.exists() {
+                continue;
+            }
+
+            // Check if package has interface files
+            let has_interfaces = share_dir.join("msg").exists()
+                || share_dir.join("srv").exists()
+                || share_dir.join("action").exists();
+
+            if has_interfaces {
+                packages.insert(package_name, share_dir);
+            }
+        }
+    }
+
+    Ok(packages)
+}
+
 /// Extract package name from Cargo.toml content
 ///
 /// Simple line-by-line parser to find "name = ..." in [package] section
