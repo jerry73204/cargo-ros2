@@ -27,14 +27,14 @@ pub mod request {
 
     impl Default for {{ service_name }}Request {
         fn default() -> Self {
-            // Leverage RMW message's C init function to get correct default values
-            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::srv::rmw::request::{{ service_name }}Request::default())
+            // Leverage FFI message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::ffi::srv::request::{{ service_name }}Request::default())
         }
     }
 
-    // Conversion from RMW layer
-    impl From<crate::srv::rmw::request::{{ service_name }}Request> for {{ service_name }}Request {
-        fn from(rmw: crate::srv::rmw::request::{{ service_name }}Request) -> Self {
+    // Conversion from FFI layer
+    impl From<crate::ffi::srv::request::{{ service_name }}Request> for {{ service_name }}Request {
+        fn from(rmw: crate::ffi::srv::request::{{ service_name }}Request) -> Self {
             Self {
                 {% for field in request_fields %}
                 {{ field.name }}: rmw.{{ field.name }}.into(),
@@ -43,8 +43,8 @@ pub mod request {
         }
     }
 
-    // Conversion to RMW layer
-    impl From<{{ service_name }}Request> for crate::srv::rmw::request::{{ service_name }}Request {
+    // Conversion to FFI layer
+    impl From<{{ service_name }}Request> for crate::ffi::srv::request::{{ service_name }}Request {
         fn from(idiomatic: {{ service_name }}Request) -> Self {
             Self {
                 {% for field in request_fields %}
@@ -56,7 +56,7 @@ pub mod request {
 
     // Message trait implementation for rosidl_runtime_rs
     impl crate::rosidl_runtime_rs::Message for {{ service_name }}Request {
-        type RmwMsg = crate::srv::rmw::request::{{ service_name }}Request;
+        type RmwMsg = crate::ffi::srv::request::{{ service_name }}Request;
 
         fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
             // Convert from idiomatic to RMW format
@@ -93,14 +93,14 @@ pub mod response {
 
     impl Default for {{ service_name }}Response {
         fn default() -> Self {
-            // Leverage RMW message's C init function to get correct default values
-            <Self as rosidl_runtime_rs::Message>::from_rmw_message(crate::srv::rmw::response::{{ service_name }}Response::default())
+            // Leverage FFI message's C init function to get correct default values
+            <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::ffi::srv::response::{{ service_name }}Response::default())
         }
     }
 
-    // Conversion from RMW layer
-    impl From<crate::srv::rmw::response::{{ service_name }}Response> for {{ service_name }}Response {
-        fn from(rmw: crate::srv::rmw::response::{{ service_name }}Response) -> Self {
+    // Conversion from FFI layer
+    impl From<crate::ffi::srv::response::{{ service_name }}Response> for {{ service_name }}Response {
+        fn from(rmw: crate::ffi::srv::response::{{ service_name }}Response) -> Self {
             Self {
                 {% for field in response_fields %}
                 {{ field.name }}: rmw.{{ field.name }}.into(),
@@ -109,8 +109,8 @@ pub mod response {
         }
     }
 
-    // Conversion to RMW layer
-    impl From<{{ service_name }}Response> for crate::srv::rmw::response::{{ service_name }}Response {
+    // Conversion to FFI layer
+    impl From<{{ service_name }}Response> for crate::ffi::srv::response::{{ service_name }}Response {
         fn from(idiomatic: {{ service_name }}Response) -> Self {
             Self {
                 {% for field in response_fields %}
@@ -122,7 +122,7 @@ pub mod response {
 
     // Message trait implementation for rosidl_runtime_rs
     impl crate::rosidl_runtime_rs::Message for {{ service_name }}Response {
-        type RmwMsg = crate::srv::rmw::response::{{ service_name }}Response;
+        type RmwMsg = crate::ffi::srv::response::{{ service_name }}Response;
 
         fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
             // Convert from idiomatic to RMW format

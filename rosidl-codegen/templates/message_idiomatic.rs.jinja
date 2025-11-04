@@ -23,14 +23,14 @@ impl {{ message_name }} {
 
 impl Default for {{ message_name }} {
     fn default() -> Self {
-        // Leverage RMW message's C init function to get correct default values
-        <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::msg::rmw::{{ message_name }}::default())
+        // Leverage FFI message's C init function to get correct default values
+        <Self as crate::rosidl_runtime_rs::Message>::from_rmw_message(crate::ffi::msg::{{ message_name }}::default())
     }
 }
 
-// Conversion between RMW and idiomatic layers
-impl From<crate::msg::rmw::{{ message_name }}> for {{ message_name }} {
-    fn from(rmw: crate::msg::rmw::{{ message_name }}) -> Self {
+// Conversion between FFI and idiomatic layers
+impl From<crate::ffi::msg::{{ message_name }}> for {{ message_name }} {
+    fn from(rmw: crate::ffi::msg::{{ message_name }}) -> Self {
         Self {
             {% for field in fields %}
             {{ field.name }}: rmw.{{ field.name }}.into(),
@@ -39,7 +39,7 @@ impl From<crate::msg::rmw::{{ message_name }}> for {{ message_name }} {
     }
 }
 
-impl From<{{ message_name }}> for crate::msg::rmw::{{ message_name }} {
+impl From<{{ message_name }}> for crate::ffi::msg::{{ message_name }} {
     fn from(idiomatic: {{ message_name }}) -> Self {
         Self {
             {% for field in fields %}
@@ -51,7 +51,7 @@ impl From<{{ message_name }}> for crate::msg::rmw::{{ message_name }} {
 
 // Message trait implementation for rosidl_runtime_rs
 impl crate::rosidl_runtime_rs::Message for {{ message_name }} {
-    type RmwMsg = crate::msg::rmw::{{ message_name }};
+    type RmwMsg = crate::ffi::msg::{{ message_name }};
 
     fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> {
         // Convert from idiomatic to RMW format

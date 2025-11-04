@@ -106,15 +106,19 @@ pub fn rust_type_for_field(field_type: &FieldType, rmw_layer: bool) -> String {
         FieldType::NamespacedType { package, name } => {
             if let Some(pkg) = package {
                 if rmw_layer {
-                    format!("{}::msg::rmw::{}", pkg, name)
+                    // Cross-package reference for FFI layer: pkg::ffi::msg::Type
+                    format!("{}::ffi::msg::{}", pkg, name)
                 } else {
+                    // Cross-package reference for idiomatic layer: pkg::msg::Type
                     format!("{}::msg::{}", pkg, name)
                 }
             } else {
-                // Local type reference
+                // Local same-package type reference
                 if rmw_layer {
-                    format!("rmw::{}", name)
+                    // For FFI layer, reference sibling in same ffi/msg module
+                    format!("crate::ffi::msg::{}", name)
                 } else {
+                    // For idiomatic layer, just the name (same module)
                     name.clone()
                 }
             }

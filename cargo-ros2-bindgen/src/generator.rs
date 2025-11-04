@@ -8,18 +8,22 @@
 use crate::ament::Package;
 use eyre::{Result, WrapErr};
 use rosidl_codegen::{
-    generate_action_package, generate_message_package, generate_service_package, GeneratedPackage,
+    generate_action_package, generate_message_package, generate_service_package,
+    utils::extract_dependencies, GeneratedPackage,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Submodule name for C-compatible FFI layer (ROS Middleware layer).
-/// This is the nested inline module that contains RMW (Raw Message Wire) format types.
+/// Top-level module name for C-compatible FFI layer (Foreign Function Interface).
+/// This is placed at the crate root level to avoid conflicts with any message/service/action names.
 ///
 /// The dual-layer architecture is:
-/// - `pkg::msg::rmw::Type` - C-compatible FFI structs for interop with ROS C libraries
+/// - `pkg::ffi::msg::Type` - C-compatible FFI structs for interop with ROS C libraries
 /// - `pkg::msg::Type` - Idiomatic Rust wrappers with safe types (String, Vec, etc.)
-const RMW_SUBMODULE: &str = "rmw";
+///
+/// By placing `ffi` at the package root (not nested in msg/srv/action), it cannot conflict
+/// with any message names (e.g., ffi.msg, rmw.msg, etc.)
+const FFI_MODULE: &str = "ffi";
 
 /// Generated Rust package structure
 #[derive(Debug)]
@@ -49,6 +53,7 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
     let mut message_count = 0;
     let mut service_count = 0;
     let mut action_count = 0;
+    let mut all_dependencies = HashSet::new();
 
     // For dependency tracking (cross-package references)
     let known_packages = HashSet::new(); // TODO: populate from ament index
@@ -61,6 +66,10 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
 
         let parsed_msg = rosidl_parser::parse_message(&content)
             .wrap_err_with(|| format!("Failed to parse message: {}", msg_name))?;
+
+        // Extract dependencies from this message
+        let msg_deps = extract_dependencies(&parsed_msg);
+        all_dependencies.extend(msg_deps);
 
         let generated =
             generate_message_package(&package.name, msg_name, &parsed_msg, &known_packages)
@@ -79,6 +88,12 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         let parsed_srv = rosidl_parser::parse_service(&content)
             .wrap_err_with(|| format!("Failed to parse service: {}", srv_name))?;
 
+        // Extract dependencies from request and response messages
+        let req_deps = extract_dependencies(&parsed_srv.request);
+        let resp_deps = extract_dependencies(&parsed_srv.response);
+        all_dependencies.extend(req_deps);
+        all_dependencies.extend(resp_deps);
+
         let generated =
             generate_service_package(&package.name, srv_name, &parsed_srv, &known_packages)
                 .wrap_err_with(|| format!("Failed to generate service: {}", srv_name))?;
@@ -96,6 +111,14 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         let parsed_action = rosidl_parser::parse_action(&content)
             .wrap_err_with(|| format!("Failed to parse action: {}", action_name))?;
 
+        // Extract dependencies from goal, result, and feedback messages
+        let goal_deps = extract_dependencies(&parsed_action.spec.goal);
+        let result_deps = extract_dependencies(&parsed_action.spec.result);
+        let feedback_deps = extract_dependencies(&parsed_action.spec.feedback);
+        all_dependencies.extend(goal_deps);
+        all_dependencies.extend(result_deps);
+        all_dependencies.extend(feedback_deps);
+
         let generated =
             generate_action_package(&package.name, action_name, &parsed_action, &known_packages)
                 .wrap_err_with(|| format!("Failed to generate action: {}", action_name))?;
@@ -107,8 +130,11 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
     // Generate lib.rs that re-exports all generated code
     generate_lib_rs(&package_output, package)?;
 
+    // Remove self-dependency (package shouldn't depend on itself)
+    all_dependencies.remove(&package.name);
+
     // Generate Cargo.toml for the package
-    generate_cargo_toml(&package_output, &package.name)?;
+    generate_cargo_toml(&package_output, &package.name, &all_dependencies)?;
 
     // Generate build.rs for FFI linking
     generate_build_rs(&package_output, &package.name)?;
@@ -128,18 +154,19 @@ fn write_generated_package(
     output_dir: &Path,
     name: &str,
 ) -> Result<()> {
+    // Create idiomatic message directory: src/msg/
     let msg_dir = output_dir.join("src").join("msg");
     std::fs::create_dir_all(&msg_dir)?;
 
-    // Create RMW subdirectory for nested inline module
-    let rmw_dir = msg_dir.join(RMW_SUBMODULE);
-    std::fs::create_dir_all(&rmw_dir)?;
+    // Create FFI message directory: src/ffi/msg/
+    let ffi_msg_dir = output_dir.join("src").join(FFI_MODULE).join("msg");
+    std::fs::create_dir_all(&ffi_msg_dir)?;
 
-    // Write RMW message to msg/rmw/ subdirectory
-    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Write FFI message to src/ffi/msg/
+    let rmw_file = ffi_msg_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.message_rmw)?;
 
-    // Write idiomatic message to msg/ directory
+    // Write idiomatic message to src/msg/
     let idiomatic_file = msg_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.message_idiomatic)?;
 
@@ -152,18 +179,19 @@ fn write_generated_service(
     output_dir: &Path,
     name: &str,
 ) -> Result<()> {
+    // Create idiomatic service directory: src/srv/
     let srv_dir = output_dir.join("src").join("srv");
     std::fs::create_dir_all(&srv_dir)?;
 
-    // Create RMW subdirectory for nested inline module
-    let rmw_dir = srv_dir.join(RMW_SUBMODULE);
-    std::fs::create_dir_all(&rmw_dir)?;
+    // Create FFI service directory: src/ffi/srv/
+    let ffi_srv_dir = output_dir.join("src").join(FFI_MODULE).join("srv");
+    std::fs::create_dir_all(&ffi_srv_dir)?;
 
-    // Write RMW service to srv/rmw/ subdirectory
-    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Write FFI service to src/ffi/srv/
+    let rmw_file = ffi_srv_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.service_rmw)?;
 
-    // Write idiomatic service to srv/ directory
+    // Write idiomatic service to src/srv/
     let idiomatic_file = srv_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.service_idiomatic)?;
 
@@ -176,18 +204,19 @@ fn write_generated_action(
     output_dir: &Path,
     name: &str,
 ) -> Result<()> {
+    // Create idiomatic action directory: src/action/
     let action_dir = output_dir.join("src").join("action");
     std::fs::create_dir_all(&action_dir)?;
 
-    // Create RMW subdirectory for nested inline module
-    let rmw_dir = action_dir.join(RMW_SUBMODULE);
-    std::fs::create_dir_all(&rmw_dir)?;
+    // Create FFI action directory: src/ffi/action/
+    let ffi_action_dir = output_dir.join("src").join(FFI_MODULE).join("action");
+    std::fs::create_dir_all(&ffi_action_dir)?;
 
-    // Write RMW action to action/rmw/ subdirectory
-    let rmw_file = rmw_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    // Write FFI action to src/ffi/action/
+    let rmw_file = ffi_action_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
     std::fs::write(&rmw_file, &generated.action_rmw)?;
 
-    // Write idiomatic action to action/ directory
+    // Write idiomatic action to src/action/
     let idiomatic_file = action_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
     std::fs::write(&idiomatic_file, &generated.action_idiomatic)?;
 
@@ -203,31 +232,100 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     lib_rs.push_str("// Auto-generated Rust bindings for ROS 2 interface package\n");
     lib_rs.push_str(&format!("// Package: {}\n\n", package.name));
 
-    // Add rosidl_runtime_rs stub (for now - will be real dependency later)
-    lib_rs.push_str("// TODO: Use real rosidl_runtime_rs crate\n");
+    // Add rosidl_runtime_rs module with trait definitions
+    // TODO: Replace with dependency on real rosidl_runtime_rs crate when available
     lib_rs.push_str("pub mod rosidl_runtime_rs {\n");
-    lib_rs.push_str("    pub trait SequenceAlloc {}\n");
-    lib_rs.push_str("    pub trait Message {}\n");
-    lib_rs.push_str("    pub trait RmwMessage {}\n");
-    lib_rs.push_str("    pub trait Service {}\n");
-    lib_rs.push_str("    pub trait Action {}\n");
+    lib_rs.push_str("    /// Sequence allocation trait for RMW types\n");
+    lib_rs.push_str("    pub trait SequenceAlloc {\n");
+    lib_rs.push_str("        fn sequence_init(seq: &mut Sequence<Self>, size: usize) -> bool where Self: Sized;\n");
+    lib_rs.push_str("        fn sequence_fini(seq: &mut Sequence<Self>) where Self: Sized;\n");
+    lib_rs.push_str("        fn sequence_copy(in_seq: &Sequence<Self>, out_seq: &mut Sequence<Self>) -> bool where Self: Sized;\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str(
+        "    /// Message trait for converting between idiomatic and RMW representations\n",
+    );
+    lib_rs.push_str("    pub trait Message {\n");
+    lib_rs.push_str("        type RmwMsg;\n");
+    lib_rs.push_str("        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> where Self: Sized;\n");
+    lib_rs.push_str("        fn from_rmw_message(msg: Self::RmwMsg) -> Self where Self: Sized;\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    /// RMW message trait with type support information\n");
+    lib_rs.push_str("    pub trait RmwMessage where Self: Sized {\n");
+    lib_rs.push_str("        const TYPE_NAME: &'static str;\n");
+    lib_rs.push_str("        fn get_type_support() -> *const std::ffi::c_void;\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    /// Service trait for ROS 2 services\n");
+    lib_rs.push_str("    pub trait Service {\n");
+    lib_rs.push_str("        type Request;\n");
+    lib_rs.push_str("        type Response;\n");
+    lib_rs.push_str("        fn get_type_support() -> *const std::ffi::c_void;\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    /// Action trait for ROS 2 actions\n");
+    lib_rs.push_str("    pub trait Action {\n");
+    lib_rs.push_str("        type Goal;\n");
+    lib_rs.push_str("        type Result;\n");
+    lib_rs.push_str("        type Feedback;\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    /// C-compatible sequence type\n");
     lib_rs.push_str("    #[repr(C)]\n");
     lib_rs.push_str("    pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }\n");
     lib_rs.push_str("}\n\n");
 
-    // Add message modules
+    // Add top-level FFI module containing all FFI types
+    let has_any_interfaces = !package.interfaces.messages.is_empty()
+        || !package.interfaces.services.is_empty()
+        || !package.interfaces.actions.is_empty();
+
+    if has_any_interfaces {
+        lib_rs.push_str(&format!("pub mod {} {{\n", FFI_MODULE));
+        lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
+
+        // FFI messages
+        if !package.interfaces.messages.is_empty() {
+            lib_rs.push_str("    pub mod msg {\n");
+            lib_rs.push_str("        use super::*;\n");
+            for msg_name in &package.interfaces.messages {
+                let module_name = msg_name.to_lowercase();
+                // Files are in src/ffi/msg/, inline module context is also ffi/msg/
+                lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
+                lib_rs.push_str(&format!("        pub mod {};\n", module_name));
+            }
+            lib_rs.push_str("    }\n\n");
+        }
+
+        // FFI services
+        if !package.interfaces.services.is_empty() {
+            lib_rs.push_str("    pub mod srv {\n");
+            lib_rs.push_str("        use super::*;\n");
+            for srv_name in &package.interfaces.services {
+                let module_name = srv_name.to_lowercase();
+                // Files are in src/ffi/srv/, inline module context is also ffi/srv/
+                lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
+                lib_rs.push_str(&format!("        pub mod {};\n", module_name));
+            }
+            lib_rs.push_str("    }\n\n");
+        }
+
+        // FFI actions
+        if !package.interfaces.actions.is_empty() {
+            lib_rs.push_str("    pub mod action {\n");
+            lib_rs.push_str("        use super::*;\n");
+            for action_name in &package.interfaces.actions {
+                let module_name = action_name.to_lowercase();
+                // Files are in src/ffi/action/, inline module context is also ffi/action/
+                lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
+                lib_rs.push_str(&format!("        pub mod {};\n", module_name));
+            }
+            lib_rs.push_str("    }\n");
+        }
+
+        lib_rs.push_str("}\n\n");
+    }
+
+    // Add idiomatic message modules
     if !package.interfaces.messages.is_empty() {
         lib_rs.push_str("pub mod msg {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
-        lib_rs.push_str("        use super::*;\n");
-        for msg_name in &package.interfaces.messages {
-            let module_name = msg_name.to_lowercase();
-            // Files are in src/msg/{RMW_SUBMODULE}/, inline module context is also msg/{RMW_SUBMODULE}/
-            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
-            lib_rs.push_str(&format!("        pub mod {};\n", module_name));
-        }
-        lib_rs.push_str("    }\n\n");
         for msg_name in &package.interfaces.messages {
             let module_name = msg_name.to_lowercase();
             // Files are in src/msg/, inline module context is also msg/
@@ -237,19 +335,10 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
         lib_rs.push_str("}\n\n");
     }
 
-    // Add service modules
+    // Add idiomatic service modules
     if !package.interfaces.services.is_empty() {
         lib_rs.push_str("pub mod srv {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
-        lib_rs.push_str("        use super::*;\n");
-        for srv_name in &package.interfaces.services {
-            let module_name = srv_name.to_lowercase();
-            // Files are in src/srv/{RMW_SUBMODULE}/, inline module context is also srv/{RMW_SUBMODULE}/
-            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
-            lib_rs.push_str(&format!("        pub mod {};\n", module_name));
-        }
-        lib_rs.push_str("    }\n\n");
         for srv_name in &package.interfaces.services {
             let module_name = srv_name.to_lowercase();
             // Files are in src/srv/, inline module context is also srv/
@@ -259,19 +348,10 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
         lib_rs.push_str("}\n\n");
     }
 
-    // Add action modules
+    // Add idiomatic action modules
     if !package.interfaces.actions.is_empty() {
         lib_rs.push_str("pub mod action {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
-        lib_rs.push_str(&format!("    pub mod {} {{\n", RMW_SUBMODULE));
-        lib_rs.push_str("        use super::*;\n");
-        for action_name in &package.interfaces.actions {
-            let module_name = action_name.to_lowercase();
-            // Files are in src/action/{RMW_SUBMODULE}/, inline module context is also action/{RMW_SUBMODULE}/
-            lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
-            lib_rs.push_str(&format!("        pub mod {};\n", module_name));
-        }
-        lib_rs.push_str("    }\n\n");
         for action_name in &package.interfaces.actions {
             let module_name = action_name.to_lowercase();
             // Files are in src/action/, inline module context is also action/
@@ -286,8 +366,12 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
 }
 
 /// Generate Cargo.toml for the generated package
-fn generate_cargo_toml(output_dir: &Path, package_name: &str) -> Result<()> {
-    let cargo_toml = format!(
+fn generate_cargo_toml(
+    output_dir: &Path,
+    package_name: &str,
+    dependencies: &HashSet<String>,
+) -> Result<()> {
+    let mut cargo_toml = format!(
         r#"[package]
 name = "{}"
 version = "0.1.0"
@@ -298,11 +382,22 @@ edition = "2021"
 
 [dependencies]
 serde = {{ version = "1.0", features = ["derive"] }}
+"#,
+        package_name
+    );
 
+    // Add cross-package dependencies
+    for dep in dependencies {
+        // Convert package name to valid crate name (replace - with _)
+        let crate_name = dep.replace('-', "_");
+        cargo_toml.push_str(&format!("{} = \"*\"\n", crate_name));
+    }
+
+    cargo_toml.push_str(
+        r#"
 [build-dependencies]
 # For linking against ROS 2 C libraries
 "#,
-        package_name
     );
 
     std::fs::write(output_dir.join("Cargo.toml"), cargo_toml)?;
@@ -401,11 +496,28 @@ mod tests {
     #[test]
     fn test_cargo_toml_generation() {
         let temp_dir = tempfile::tempdir().unwrap();
-        generate_cargo_toml(temp_dir.path(), "test_pkg").unwrap();
+        let deps = HashSet::new();
+        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps).unwrap();
 
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"test_pkg\""));
         assert!(cargo_toml.contains("serde"));
+    }
+
+    #[test]
+    fn test_cargo_toml_with_dependencies() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut deps = HashSet::new();
+        deps.insert("std_msgs".to_string());
+        deps.insert("geometry_msgs".to_string());
+
+        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps).unwrap();
+
+        let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
+        assert!(cargo_toml.contains("name = \"test_pkg\""));
+        assert!(cargo_toml.contains("serde"));
+        assert!(cargo_toml.contains("std_msgs = \"*\""));
+        assert!(cargo_toml.contains("geometry_msgs = \"*\""));
     }
 
     #[test]
