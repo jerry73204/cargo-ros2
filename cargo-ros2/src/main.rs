@@ -66,7 +66,7 @@ enum Ros2Command {
         release: bool,
 
         /// Look up dependencies in the workspace directory
-        #[arg(long)]
+        #[arg(long, default_value_t = true)]
         lookup_in_workspace: bool,
 
         /// Additional arguments to pass to cargo build
