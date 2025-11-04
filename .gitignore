@@ -9,6 +9,13 @@ build/
 install/
 log/
 .colcon/
+.ros2_bindgen_cache
+
+# Test workspace
+/test_workspace/build/
+/test_workspace/install/
+/test_workspace/log/
+/test_workspace/.colcon_cache/
 
 # IDE
 .vscode/
