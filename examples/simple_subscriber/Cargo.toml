@@ -1,0 +1,11 @@
+[package]
+name = "simple_subscriber"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+std_msgs = "*"
+geometry_msgs = "*"
+
+# Note: rclrs would be added here for actual ROS 2 subscribing
+# This example demonstrates binding generation with cargo-ros2

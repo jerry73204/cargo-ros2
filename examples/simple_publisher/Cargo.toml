@@ -1,0 +1,10 @@
+[package]
+name = "simple_publisher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+std_msgs = "*"
+
+# Note: rclrs would be added here for actual ROS 2 publishing
+# This example demonstrates binding generation with cargo-ros2
