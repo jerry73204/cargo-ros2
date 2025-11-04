@@ -368,8 +368,20 @@ fn ament_build(
         all_patches.extend(workspace_pkgs);
 
         // 1a2. Discover interface packages from workspace install directory
+        //
+        // IMPORTANT: This discovers from install/, not src/, which is CORRECT!
+        // Colcon guarantees topological ordering: dependencies are ALWAYS built and
+        // installed BEFORE dependents. So when we're building package B that depends
+        // on package A, package A is already in install/A/ directory.
+        //
+        // Example: robot_controller depends on robot_interfaces
+        //   1. colcon builds robot_interfaces first → install/robot_interfaces/
+        //   2. colcon builds robot_controller next → we discover robot_interfaces here ✓
+        //
+        // See package_discovery::discover_interface_packages_from_workspace() docs for details.
         if ctx.verbose {
             eprintln!("  Discovering interface packages from workspace...");
+            eprintln!("    (Note: Discovers from install/ - colcon guarantees dependencies are built first)");
         }
 
         // install_base_abs points to install/<package_name>, but we need install/ to find other packages
@@ -383,7 +395,14 @@ fn ament_build(
             )?;
 
         if ctx.verbose {
-            eprintln!("    Found {} interface packages", interface_pkgs.len());
+            if interface_pkgs.is_empty() {
+                eprintln!("    Found 0 interface packages in workspace (dependencies not built yet, or no workspace deps)");
+            } else {
+                eprintln!("    Found {} interface package(s):", interface_pkgs.len());
+                for (pkg_name, share_dir) in &interface_pkgs {
+                    eprintln!("      - {} ({})", pkg_name, share_dir.display());
+                }
+            }
         }
 
         // Generate bindings for interface packages that need them

@@ -152,6 +152,35 @@ pub fn discover_installed_ament_packages() -> Result<HashMap<String, PathBuf>> {
 /// Scans the install directory for packages with .msg/.srv/.action files.
 /// Returns a mapping of package name -> share directory path.
 ///
+/// # Colcon Dependency Ordering Guarantee
+///
+/// This function discovers from the `install/` directory, which works correctly
+/// because colcon **guarantees** topological dependency ordering:
+///
+/// 1. Dependencies are ALWAYS built and installed BEFORE dependents
+/// 2. When building package B that depends on package A, package A is already in install/A/
+/// 3. The install/ directory is created before any package builds
+///
+/// Example workflow:
+/// ```text
+/// colcon build
+///   └─> Builds robot_interfaces (no dependencies) → install/robot_interfaces/
+///   └─> Builds robot_controller (depends on robot_interfaces)
+///       └─> cargo ros2 ament-build
+///           └─> Discovers robot_interfaces from install/robot_interfaces/ ✓
+///           └─> Generates bindings ✓
+///           └─> Build succeeds ✓
+/// ```
+///
+/// This is colcon's core design: packages discover dependencies from `install/`, not `src/`.
+/// See: <https://colcon.readthedocs.io/en/released/developer/environment.html>
+///
+/// # Edge Cases
+///
+/// The only scenario where this returns empty is when:
+/// - User bypasses colcon and runs `cargo ros2 build` directly in a package subdirectory
+/// - This is expected behavior - users should use colcon for workspace builds
+///
 /// # Arguments
 /// * `install_base` - Install directory path (e.g., "install/")
 ///
@@ -162,6 +191,10 @@ pub fn discover_interface_packages_from_workspace(
 ) -> Result<HashMap<String, PathBuf>> {
     let mut packages = HashMap::new();
 
+    // If install/ doesn't exist, we're either:
+    // 1. Building the first package in the workspace (no dependencies yet), or
+    // 2. User is building standalone (not via colcon)
+    // In both cases, returning empty is correct.
     if !install_base.exists() {
         return Ok(packages);
     }
