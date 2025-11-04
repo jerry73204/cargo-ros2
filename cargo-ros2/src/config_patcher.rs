@@ -128,11 +128,6 @@ impl ConfigPatcher {
 
         Ok(())
     }
-
-    /// Get path to config file
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
-    }
 }
 
 #[cfg(test)]

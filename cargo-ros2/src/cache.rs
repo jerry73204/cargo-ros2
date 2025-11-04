@@ -110,11 +110,6 @@ impl Cache {
         }
     }
 
-    /// Clear all entries
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
     /// Get number of cached packages
     pub fn len(&self) -> usize {
         self.entries.len()

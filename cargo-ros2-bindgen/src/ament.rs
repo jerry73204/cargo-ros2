@@ -190,6 +190,7 @@ impl AmentIndex {
     }
 
     /// Get all discovered packages
+    #[allow(dead_code)] // Used by cargo-ros2 crate
     pub fn packages(&self) -> &HashMap<String, Package> {
         &self.packages
     }

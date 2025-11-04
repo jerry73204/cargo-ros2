@@ -19,6 +19,7 @@ serde_json = "1.0"
 cargo_metadata = "0.18"
 toml = "0.8"
 sha2 = "0.10"
+cargo-ros2-bindgen = { path = "../cargo-ros2-bindgen" }
 
 [dev-dependencies]
 tempfile = "3.8"

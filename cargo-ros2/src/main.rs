@@ -6,7 +6,6 @@ mod workflow;
 use clap::{Parser, Subcommand};
 use eyre::Result;
 use std::env;
-use std::path::PathBuf;
 use workflow::WorkflowContext;
 
 /// All-in-one build tool for ROS 2 Rust projects

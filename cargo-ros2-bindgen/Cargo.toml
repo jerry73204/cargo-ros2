@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Rust binding generator for ROS 2 interface packages"
 
+[lib]
+name = "cargo_ros2_bindgen"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cargo-ros2-bindgen"
 path = "src/main.rs"

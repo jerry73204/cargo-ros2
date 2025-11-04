@@ -8,12 +8,13 @@
 //! 5. Patch .cargo/config.toml
 //! 6. Invoke cargo build
 
-use crate::cache::{Cache, CacheEntry, CACHE_FILE_NAME};
+use crate::cache::{self, Cache, CacheEntry, CACHE_FILE_NAME};
 use crate::config_patcher::ConfigPatcher;
 use crate::dependency_parser::{DependencyParser, RosDependency};
+use cargo_ros2_bindgen::ament::AmentIndex;
 use eyre::{eyre, Result, WrapErr};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,9 +46,15 @@ impl WorkflowContext {
 
     /// Discover ROS dependencies via ament index
     pub fn discover_ament_packages(&self) -> Result<HashMap<String, PathBuf>> {
-        // This would use ament index, but for now we return empty
-        // TODO: Integrate with cargo-ros2-bindgen's ament module
-        Ok(HashMap::new())
+        let index =
+            AmentIndex::from_env().wrap_err("Failed to load ament index (is ROS 2 sourced?)")?;
+
+        let mut packages = HashMap::new();
+        for (name, package) in index.packages() {
+            packages.insert(name.clone(), package.share_dir.clone());
+        }
+
+        Ok(packages)
     }
 
     /// Discover ROS dependencies from Cargo.toml
@@ -62,14 +69,30 @@ impl WorkflowContext {
     }
 
     /// Check which packages need generation (cache miss or stale)
-    pub fn check_cache(&self, dependencies: &[RosDependency]) -> Result<Vec<String>> {
+    pub fn check_cache(
+        &self,
+        dependencies: &[RosDependency],
+        ament_packages: &HashMap<String, PathBuf>,
+    ) -> Result<Vec<String>> {
         let cache = Cache::load(&self.cache_file)?;
         let mut to_generate = Vec::new();
 
         for dep in dependencies {
-            // For now, always generate if not in cache
-            // TODO: Calculate checksums and validate
-            if cache.get(&dep.name).is_none() {
+            // Get the package share dir
+            let share_dir = match ament_packages.get(&dep.name) {
+                Some(dir) => dir,
+                None => {
+                    // Package not in ament index, skip
+                    continue;
+                }
+            };
+
+            // Calculate current checksum
+            let current_checksum = cache::calculate_package_checksum(share_dir)
+                .wrap_err_with(|| format!("Failed to calculate checksum for {}", dep.name))?;
+
+            // Check if cache is valid
+            if !cache.is_valid(&dep.name, &current_checksum) {
                 to_generate.push(dep.name.clone());
             }
         }
@@ -143,12 +166,21 @@ impl WorkflowContext {
     }
 
     /// Update cache after successful generation
-    pub fn update_cache(&self, package_name: &str, output_dir: PathBuf) -> Result<()> {
+    pub fn update_cache(
+        &self,
+        package_name: &str,
+        package_share_dir: &PathBuf,
+        output_dir: PathBuf,
+    ) -> Result<()> {
         let mut cache = Cache::load(&self.cache_file)?;
+
+        // Calculate checksum of the source package
+        let checksum = cache::calculate_package_checksum(package_share_dir)
+            .wrap_err_with(|| format!("Failed to calculate checksum for {}", package_name))?;
 
         let entry = CacheEntry {
             package_name: package_name.to_string(),
-            checksum: "TODO".to_string(), // TODO: Calculate actual checksum
+            checksum,
             ros_distro: std::env::var("ROS_DISTRO").ok(),
             package_version: None,
             timestamp: SystemTime::now()
@@ -189,9 +221,19 @@ impl WorkflowContext {
             eprintln!("cargo-ros2 workflow starting...");
         }
 
-        // Step 1: Discover ROS dependencies
+        // Step 1: Discover ament packages
         if self.verbose {
-            eprintln!("Step 1: Discovering ROS dependencies...");
+            eprintln!("Step 1: Discovering ROS packages from ament index...");
+        }
+        let ament_packages = self.discover_ament_packages()?;
+
+        if self.verbose {
+            eprintln!("  Found {} packages in ament index", ament_packages.len());
+        }
+
+        // Step 2: Discover ROS dependencies from Cargo.toml
+        if self.verbose {
+            eprintln!("Step 2: Discovering ROS dependencies from Cargo.toml...");
         }
         let dependencies = self.discover_ros_dependencies()?;
 
@@ -207,34 +249,42 @@ impl WorkflowContext {
             eprintln!("  Found {} ROS dependencies", dependencies.len());
         }
 
-        // Step 2: Check cache
+        // Step 3: Check cache
         if self.verbose {
-            eprintln!("Step 2: Checking cache...");
+            eprintln!("Step 3: Checking cache...");
         }
-        let to_generate = self.check_cache(&dependencies)?;
+        let to_generate = self.check_cache(&dependencies, &ament_packages)?;
 
         if self.verbose {
             eprintln!("  {} packages need generation", to_generate.len());
         }
 
-        // Step 3: Generate bindings
+        // Step 4: Generate bindings
         let mut generated_packages = Vec::new();
         for package_name in &to_generate {
             let output_dir = self.generate_bindings(package_name)?;
-            self.update_cache(package_name, output_dir.clone())?;
+
+            // Get share dir for checksum calculation
+            if let Some(share_dir) = ament_packages.get(package_name) {
+                self.update_cache(package_name, share_dir, output_dir.clone())?;
+            }
+
             generated_packages.push((package_name.clone(), output_dir));
         }
 
-        // Step 4: Patch .cargo/config.toml
+        // Step 5: Patch .cargo/config.toml
         if !generated_packages.is_empty() {
             if self.verbose {
-                eprintln!("Step 3: Patching .cargo/config.toml...");
+                eprintln!("Step 4: Patching .cargo/config.toml...");
             }
             self.patch_cargo_config(&generated_packages)?;
         }
 
-        // Step 5: Invoke cargo build (unless --bindings-only)
+        // Step 6: Invoke cargo build (unless --bindings-only)
         if !bindings_only {
+            if self.verbose {
+                eprintln!("Step 5: Invoking cargo build...");
+            }
             self.invoke_cargo_build()?;
         }
 
@@ -288,11 +338,32 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_ament_packages_empty() {
+    fn test_discover_ament_packages_no_ros() {
         let temp_dir = tempfile::tempdir().unwrap();
         let ctx = WorkflowContext::new(temp_dir.path().to_path_buf(), false);
 
-        let packages = ctx.discover_ament_packages().unwrap();
-        assert!(packages.is_empty());
+        // If ROS is not sourced, this will fail
+        // If ROS is sourced, it should return packages
+        let result = ctx.discover_ament_packages();
+
+        // Either way is fine for this test - we're just checking it doesn't panic
+        match result {
+            Ok(packages) => {
+                // ROS is sourced - packages may or may not be empty
+                eprintln!("Found {} ROS packages", packages.len());
+            }
+            Err(e) => {
+                // ROS is not sourced - expected
+                // The error should mention the environment variable issue
+                let error_str = e.to_string();
+                assert!(
+                    error_str.contains("AMENT_PREFIX_PATH")
+                        || error_str.contains("environment variable not set")
+                        || error_str.contains("Failed to load ament index"),
+                    "Unexpected error message: {}",
+                    error_str
+                );
+            }
+        }
     }
 }
