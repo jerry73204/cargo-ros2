@@ -246,7 +246,10 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     );
     lib_rs.push_str("    pub trait Message {\n");
     lib_rs.push_str("        type RmwMsg;\n");
-    lib_rs.push_str("        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> where Self: Sized;\n");
+    lib_rs.push_str("        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg>\n");
+    lib_rs.push_str("        where\n");
+    lib_rs.push_str("            Self: Sized + Clone,\n");
+    lib_rs.push_str("            Self::RmwMsg: Clone;\n");
     lib_rs.push_str("        fn from_rmw_message(msg: Self::RmwMsg) -> Self where Self: Sized;\n");
     lib_rs.push_str("    }\n\n");
     lib_rs.push_str("    /// RMW message trait with type support information\n");
