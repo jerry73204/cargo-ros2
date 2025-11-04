@@ -1,4 +1,5 @@
 // Auto-generated ROS 2 Rust bindings
+// TEMPLATE_VERSION: 2025-01-29-v2-with-clone-bounds
 
 // Stub trait definitions for rosidl_runtime_rs
 pub mod rosidl_runtime_rs {
@@ -10,7 +11,10 @@ pub mod rosidl_runtime_rs {
 
     pub trait Message {
         type RmwMsg;
-        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg> where Self: Sized;
+        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg>
+        where
+            Self: Sized + Clone,
+            Self::RmwMsg: Clone;
         fn from_rmw_message(msg: Self::RmwMsg) -> Self where Self: Sized;
     }
 

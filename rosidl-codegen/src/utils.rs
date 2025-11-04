@@ -1,6 +1,30 @@
 use rosidl_parser::{FieldType, Message};
 use std::collections::HashSet;
 
+/// Convert a PascalCase or camelCase string to snake_case
+pub fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut prev_is_lower = false;
+
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            // Add underscore before uppercase if:
+            // - Not the first character
+            // - Previous character was lowercase
+            if i > 0 && prev_is_lower {
+                result.push('_');
+            }
+            result.push(ch.to_ascii_lowercase());
+            prev_is_lower = false;
+        } else {
+            result.push(ch);
+            prev_is_lower = ch.is_lowercase();
+        }
+    }
+
+    result
+}
+
 /// Extract all package dependencies from a message
 pub fn extract_dependencies(message: &Message) -> HashSet<String> {
     let mut deps = HashSet::new();
@@ -99,5 +123,18 @@ mod tests {
             default_value: None,
         });
         assert!(!needs_big_array(&msg));
+    }
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("Duration"), "duration");
+        assert_eq!(to_snake_case("Time"), "time");
+        assert_eq!(
+            to_snake_case("TwistWithCovariance"),
+            "twist_with_covariance"
+        );
+        assert_eq!(to_snake_case("PoseStamped"), "pose_stamped");
+        assert_eq!(to_snake_case("camelCase"), "camel_case");
+        assert_eq!(to_snake_case("already_snake"), "already_snake");
     }
 }

@@ -1,5 +1,14 @@
 use askama::Template;
 
+// Custom Askama filters
+pub mod filters {
+    use crate::utils::to_snake_case;
+
+    pub fn snake_case(s: &str) -> ::askama::Result<String> {
+        Ok(to_snake_case(s))
+    }
+}
+
 #[derive(Template)]
 #[template(path = "cargo.toml.jinja", escape = "none")]
 pub struct CargoTomlTemplate<'a> {
