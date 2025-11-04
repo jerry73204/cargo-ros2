@@ -64,6 +64,14 @@ enum Ros2Command {
         /// Build with release profile
         #[arg(long)]
         release: bool,
+
+        /// Look up dependencies in the workspace directory
+        #[arg(long)]
+        lookup_in_workspace: bool,
+
+        /// Additional arguments to pass to cargo build
+        #[arg(last = true)]
+        cargo_args: Vec<String>,
     },
 }
 
@@ -128,8 +136,16 @@ fn main() -> Result<()> {
         Ros2Command::AmentBuild {
             install_base,
             release,
+            lookup_in_workspace,
+            cargo_args,
         } => {
-            ament_build(&ctx, &install_base, release)?;
+            ament_build(
+                &ctx,
+                &install_base,
+                release,
+                lookup_in_workspace,
+                &cargo_args,
+            )?;
         }
     }
 
@@ -292,22 +308,113 @@ fn show_package_info(ctx: &WorkflowContext, package_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn ament_build(ctx: &WorkflowContext, install_base: &Path, release: bool) -> Result<()> {
+fn ament_build(
+    ctx: &WorkflowContext,
+    install_base: &Path,
+    release: bool,
+    lookup_in_workspace: bool,
+    cargo_args: &[String],
+) -> Result<()> {
     use cargo_ros2::ament_installer::{is_library_package, AmentInstaller};
+    use cargo_ros2::package_discovery::{
+        discover_installed_ament_packages, discover_workspace_packages,
+    };
+    use std::collections::HashMap;
     use std::process::Command;
 
     println!("Building and installing package to ament index...");
 
-    // Step 1: Run workflow to generate bindings
+    // Step 1: Collect all patches BEFORE generating bindings
     if ctx.verbose {
-        eprintln!("Step 1: Generating ROS 2 bindings...");
+        eprintln!("Step 1: Collecting package patches...");
     }
+
+    let mut all_patches: HashMap<String, PathBuf> = HashMap::new();
+
+    // 1a. Workspace packages (if --lookup-in-workspace)
+    if lookup_in_workspace {
+        if ctx.verbose {
+            eprintln!("  Discovering workspace packages...");
+        }
+
+        // Find workspace root (go up from project_root until we find no parent or hit root)
+        let mut workspace_root = ctx.project_root.clone();
+        while let Some(parent) = workspace_root.parent() {
+            // Check if parent looks like a workspace (has build/ or install/)
+            if parent.join("build").exists() || parent.join("install").exists() {
+                workspace_root = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+
+        let build_base = workspace_root.join("build");
+        let install_base_abs = if install_base.is_absolute() {
+            install_base.to_path_buf()
+        } else {
+            workspace_root.join(install_base)
+        };
+
+        let workspace_pkgs = discover_workspace_packages(
+            &workspace_root,
+            Some(&build_base),
+            Some(&install_base_abs),
+        )?;
+
+        if ctx.verbose {
+            eprintln!("    Found {} workspace packages", workspace_pkgs.len());
+        }
+
+        all_patches.extend(workspace_pkgs);
+    }
+
+    // 1b. Installed ament packages
+    if ctx.verbose {
+        eprintln!("  Discovering installed ament packages...");
+    }
+
+    let installed_pkgs = discover_installed_ament_packages()?;
+
+    if ctx.verbose {
+        eprintln!("    Found {} installed packages", installed_pkgs.len());
+    }
+
+    all_patches.extend(installed_pkgs);
+
+    // Step 2: Generate bindings
+    if ctx.verbose {
+        eprintln!("Step 2: Generating ROS 2 bindings...");
+    }
+
     ctx.run(true)?; // bindings_only = true
 
-    // Step 2: Build the package
+    // 2b. Add generated bindings to patches
+    // Generated bindings are in target/ros2_bindings/<package>/
+    let bindings_dir = ctx.output_dir.clone();
+    if bindings_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&bindings_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    let package_name = entry.file_name().to_string_lossy().to_string();
+                    all_patches.insert(package_name, entry.path());
+                }
+            }
+        }
+    }
+
+    // Step 3: Write unified config.toml (SINGLE WRITE)
+    if ctx.verbose {
+        eprintln!("Step 3: Writing unified .cargo/config.toml...");
+        eprintln!("  Total patches: {}", all_patches.len());
+    }
+
+    let patches: Vec<(String, PathBuf)> = all_patches.into_iter().collect();
+    ctx.patch_cargo_config(&patches)?;
+
+    // Step 4: Build the package
     if ctx.verbose {
         eprintln!(
-            "Step 2: Building package{}...",
+            "Step 4: Building package{}...",
             if release { " (release)" } else { "" }
         );
     }
@@ -319,6 +426,11 @@ fn ament_build(ctx: &WorkflowContext, install_base: &Path, release: bool) -> Res
         build_cmd.arg("--release");
     }
 
+    // Add additional cargo arguments
+    for arg in cargo_args {
+        build_cmd.arg(arg);
+    }
+
     let status = build_cmd
         .status()
         .wrap_err("Failed to execute cargo build")?;
@@ -327,7 +439,7 @@ fn ament_build(ctx: &WorkflowContext, install_base: &Path, release: bool) -> Res
         return Err(eyre::eyre!("cargo build failed"));
     }
 
-    // Step 3: Get package name from Cargo.toml
+    // Step 5: Get package name from Cargo.toml
     let cargo_toml_path = ctx.project_root.join("Cargo.toml");
     let cargo_toml =
         std::fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
@@ -335,17 +447,17 @@ fn ament_build(ctx: &WorkflowContext, install_base: &Path, release: bool) -> Res
     let package_name = extract_package_name(&cargo_toml)
         .ok_or_else(|| eyre::eyre!("Failed to extract package name from Cargo.toml"))?;
 
-    // Step 4: Check if it's a library package
+    // Step 6: Check if it's a library package
     let is_library = is_library_package(&ctx.project_root)?;
 
     if ctx.verbose {
         eprintln!(
-            "Step 3: Installing {} package...",
+            "Step 5: Installing {} package...",
             if is_library { "library" } else { "binary" }
         );
     }
 
-    // Step 5: Install using ament installer
+    // Step 7: Install using ament installer
     let package_install_base = install_base.join(&package_name);
     let installer = AmentInstaller::new(
         package_install_base.clone(),
