@@ -24,6 +24,8 @@ cargo_metadata = "0.18"
 toml = "0.8"
 sha2 = "0.10"
 cargo-ros2-bindgen = { path = "../cargo-ros2-bindgen" }
+rayon = "1.10"
+indicatif = "0.17"
 
 [dev-dependencies]
 tempfile = "3.8"

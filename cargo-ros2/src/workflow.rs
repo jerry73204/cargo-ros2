@@ -215,6 +215,121 @@ impl WorkflowContext {
         Ok(())
     }
 
+    /// Generate bindings for multiple packages in parallel
+    fn generate_bindings_parallel(
+        &self,
+        packages: &[String],
+        ament_packages: &HashMap<String, PathBuf>,
+    ) -> Result<Vec<(String, PathBuf)>> {
+        use indicatif::{ProgressBar, ProgressStyle};
+        use rayon::prelude::*;
+        use std::sync::Mutex;
+
+        // Create progress bar
+        let pb = ProgressBar::new(packages.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        // Use Mutex for thread-safe cache updates
+        let cache_file = self.cache_file.clone();
+        let results = Mutex::new(Vec::new());
+        let errors = Mutex::new(Vec::new());
+
+        packages.par_iter().for_each(|package_name| {
+            pb.set_message(format!("Generating {}", package_name));
+
+            match self.generate_bindings(package_name) {
+                Ok(output_dir) => {
+                    // Update cache
+                    if let Some(share_dir) = ament_packages.get(package_name) {
+                        if let Err(e) = self.update_cache_threadsafe(
+                            package_name,
+                            share_dir,
+                            output_dir.clone(),
+                            &cache_file,
+                        ) {
+                            errors.lock().unwrap().push(format!(
+                                "Failed to update cache for {}: {}",
+                                package_name, e
+                            ));
+                        }
+                    }
+
+                    results
+                        .lock()
+                        .unwrap()
+                        .push((package_name.clone(), output_dir));
+                }
+                Err(e) => {
+                    errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("Failed to generate {}: {}", package_name, e));
+                }
+            }
+
+            pb.inc(1);
+        });
+
+        pb.finish_with_message("Generation complete");
+
+        // Check for errors
+        let errors = errors.lock().unwrap();
+        if !errors.is_empty() {
+            return Err(eyre!(
+                "Errors during parallel generation:\n{}",
+                errors.join("\n")
+            ));
+        }
+        drop(errors);
+
+        let results = results.lock().unwrap().clone();
+        Ok(results)
+    }
+
+    /// Thread-safe cache update for parallel generation
+    fn update_cache_threadsafe(
+        &self,
+        package_name: &str,
+        package_share_dir: &Path,
+        output_dir: PathBuf,
+        cache_file: &Path,
+    ) -> Result<()> {
+        use std::sync::Mutex;
+        static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+        let _lock = CACHE_LOCK.lock().unwrap();
+
+        let mut cache = Cache::load(cache_file)?;
+
+        // Calculate checksum of the source package
+        let checksum = cache::calculate_package_checksum(package_share_dir)
+            .wrap_err_with(|| format!("Failed to calculate checksum for {}", package_name))?;
+
+        let entry = CacheEntry {
+            package_name: package_name.to_string(),
+            checksum,
+            ros_distro: std::env::var("ROS_DISTRO").ok(),
+            package_version: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            output_dir,
+        };
+
+        cache.insert(entry);
+        cache.save(cache_file)?;
+
+        Ok(())
+    }
+
     /// Run the complete workflow
     pub fn run(&self, bindings_only: bool) -> Result<()> {
         if self.verbose {
@@ -259,18 +374,23 @@ impl WorkflowContext {
             eprintln!("  {} packages need generation", to_generate.len());
         }
 
-        // Step 4: Generate bindings
-        let mut generated_packages = Vec::new();
-        for package_name in &to_generate {
-            let output_dir = self.generate_bindings(package_name)?;
+        // Step 4: Generate bindings (in parallel if multiple packages)
+        let generated_packages = if to_generate.len() > 1 {
+            self.generate_bindings_parallel(&to_generate, &ament_packages)?
+        } else {
+            let mut generated_packages = Vec::new();
+            for package_name in &to_generate {
+                let output_dir = self.generate_bindings(package_name)?;
 
-            // Get share dir for checksum calculation
-            if let Some(share_dir) = ament_packages.get(package_name) {
-                self.update_cache(package_name, share_dir, output_dir.clone())?;
+                // Get share dir for checksum calculation
+                if let Some(share_dir) = ament_packages.get(package_name) {
+                    self.update_cache(package_name, share_dir, output_dir.clone())?;
+                }
+
+                generated_packages.push((package_name.clone(), output_dir));
             }
-
-            generated_packages.push((package_name.clone(), output_dir));
-        }
+            generated_packages
+        };
 
         // Step 5: Patch .cargo/config.toml
         if !generated_packages.is_empty() {

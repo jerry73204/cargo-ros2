@@ -517,3 +517,154 @@ mod error_tests {
         }
     }
 }
+
+// CLI command tests
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_list_empty() {
+        let temp_dir = TempDir::new().unwrap();
+
+        use cargo_ros2::cache::Cache;
+
+        // Empty cache
+        let cache = Cache::load(&temp_dir.path().join(".ros2_bindgen_cache")).unwrap();
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_cache_list_with_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_file = temp_dir.path().join(".ros2_bindgen_cache");
+
+        use cargo_ros2::cache::{Cache, CacheEntry};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut cache = Cache::load(&cache_file).unwrap();
+
+        // Add entries
+        let entry1 = CacheEntry {
+            package_name: "std_msgs".to_string(),
+            checksum: "abc123".to_string(),
+            ros_distro: Some("humble".to_string()),
+            package_version: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            output_dir: temp_dir.path().join("std_msgs"),
+        };
+
+        let entry2 = CacheEntry {
+            package_name: "geometry_msgs".to_string(),
+            checksum: "def456".to_string(),
+            ros_distro: Some("humble".to_string()),
+            package_version: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            output_dir: temp_dir.path().join("geometry_msgs"),
+        };
+
+        cache.insert(entry1);
+        cache.insert(entry2);
+        cache.save(&cache_file).unwrap();
+
+        // Verify entries can be iterated
+        let cache = Cache::load(&cache_file).unwrap();
+        assert_eq!(cache.len(), 2);
+
+        let entries: Vec<_> = cache.entries().collect();
+        assert_eq!(entries.len(), 2);
+
+        // Verify both packages are present
+        assert!(cache.get("std_msgs").is_some());
+        assert!(cache.get("geometry_msgs").is_some());
+    }
+
+    #[test]
+    fn test_cache_rebuild_removes_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_file = temp_dir.path().join(".ros2_bindgen_cache");
+
+        use cargo_ros2::cache::{Cache, CacheEntry};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut cache = Cache::load(&cache_file).unwrap();
+
+        let entry = CacheEntry {
+            package_name: "std_msgs".to_string(),
+            checksum: "abc123".to_string(),
+            ros_distro: Some("humble".to_string()),
+            package_version: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            output_dir: temp_dir.path().join("std_msgs"),
+        };
+
+        cache.insert(entry);
+        cache.save(&cache_file).unwrap();
+
+        // Verify entry exists
+        let cache = Cache::load(&cache_file).unwrap();
+        assert!(cache.get("std_msgs").is_some());
+
+        // Remove entry (simulating rebuild command)
+        let mut cache = Cache::load(&cache_file).unwrap();
+        cache.remove("std_msgs");
+        cache.save(&cache_file).unwrap();
+
+        // Verify entry is gone
+        let cache = Cache::load(&cache_file).unwrap();
+        assert!(cache.get("std_msgs").is_none());
+    }
+
+    #[test]
+    fn test_cache_entries_iterator() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_file = temp_dir.path().join(".ros2_bindgen_cache");
+
+        use cargo_ros2::cache::{Cache, CacheEntry};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut cache = Cache::load(&cache_file).unwrap();
+
+        // Add multiple entries
+        for i in 0..5 {
+            let entry = CacheEntry {
+                package_name: format!("package_{}", i),
+                checksum: format!("checksum_{}", i),
+                ros_distro: Some("humble".to_string()),
+                package_version: None,
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                output_dir: temp_dir.path().join(format!("package_{}", i)),
+            };
+            cache.insert(entry);
+        }
+
+        cache.save(&cache_file).unwrap();
+
+        // Load and iterate
+        let cache = Cache::load(&cache_file).unwrap();
+        let entries: Vec<_> = cache.entries().collect();
+
+        assert_eq!(entries.len(), 5);
+
+        // Verify all packages are present
+        for i in 0..5 {
+            let package_name = format!("package_{}", i);
+            assert!(
+                entries.iter().any(|e| e.package_name == package_name),
+                "Package {} not found",
+                package_name
+            );
+        }
+    }
+}

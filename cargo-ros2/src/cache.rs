@@ -119,6 +119,11 @@ impl Cache {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Get iterator over cache entries
+    pub fn entries(&self) -> impl Iterator<Item = &CacheEntry> {
+        self.entries.values()
+    }
 }
 
 impl Default for Cache {
