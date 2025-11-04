@@ -1,12 +1,7 @@
-mod cache;
-mod config_patcher;
-mod dependency_parser;
-mod workflow;
-
+use cargo_ros2::workflow::WorkflowContext;
 use clap::{Parser, Subcommand};
 use eyre::Result;
 use std::env;
-use workflow::WorkflowContext;
 
 /// All-in-one build tool for ROS 2 Rust projects
 #[derive(Parser, Debug)]

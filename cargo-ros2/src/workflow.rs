@@ -14,7 +14,7 @@ use crate::dependency_parser::{DependencyParser, RosDependency};
 use cargo_ros2_bindgen::ament::AmentIndex;
 use eyre::{eyre, Result, WrapErr};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -169,7 +169,7 @@ impl WorkflowContext {
     pub fn update_cache(
         &self,
         package_name: &str,
-        package_share_dir: &PathBuf,
+        package_share_dir: &Path,
         output_dir: PathBuf,
     ) -> Result<()> {
         let mut cache = Cache::load(&self.cache_file)?;

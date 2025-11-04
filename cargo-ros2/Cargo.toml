@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "All-in-one build tool for ROS 2 Rust projects"
 
+[lib]
+name = "cargo_ros2"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cargo-ros2"
 path = "src/main.rs"
