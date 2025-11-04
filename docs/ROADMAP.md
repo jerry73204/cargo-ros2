@@ -1307,6 +1307,346 @@ colcon build --packages-select my_rust_pkg
 **Documentation**:
 - Completion summary: `/home/aeon/repos/cargo-ros2/tmp/subphase_4_1_complete.md`
 
+### Subphase 4.1.1: config.toml Management Refactoring (1 week)
+
+**Status**: 🔧 **TODO** (Critical architectural fix discovered 2025-11-05)
+
+**Goal**: Centralize `.cargo/config.toml` management in cargo-ros2 to eliminate race conditions and conflicts with colcon-ros-cargo.
+
+**Problem Summary**:
+
+Currently, two systems write to `.cargo/config.toml`:
+1. **colcon-ros-cargo** writes patches for workspace + installed ament packages
+2. **cargo-ros2** writes patches for generated bindings in `target/ros2_bindings/`
+
+This creates:
+- Race conditions when both tools write simultaneously
+- Patches clobbering each other (last write wins)
+- Inconsistent behavior depending on execution timing
+- Duplicate package discovery logic (Python in colcon-ros-cargo, Rust in cargo-ros2)
+
+**Architecture Issue**:
+
+```
+colcon-ros-cargo:
+  _prepare() → write_cargo_config_toml()  ⚠️ WRITES config.toml
+  _build_cmd() → cargo ros2 ament-build
+    └─> cargo-ros2:
+          workflow.run() → patch_cargo_config()  ⚠️ WRITES config.toml (CONFLICT!)
+```
+
+**Solution**: Make cargo-ros2 the single source of truth for config.toml management.
+
+#### Phase 1: Absorb colcon-cargo Dependency
+
+**Why**: colcon-cargo provides minimal value (~50 useful lines):
+- Task lifecycle boilerplate
+- Argument parser setup
+- CARGO_EXECUTABLE discovery
+
+All of this can be replicated directly in colcon-ros-cargo in ~100 lines.
+
+**Tasks**:
+
+- [ ] Remove colcon-cargo dependency from colcon-ros-cargo
+  - [ ] Update `colcon-ros-cargo/setup.cfg` - Remove `colcon-cargo` from `install_requires`
+  - [ ] Remove `toml` dependency (no longer needed)
+
+- [ ] Rewrite AmentCargoBuildTask to not inherit from CargoBuildTask
+  - [ ] Implement `TaskExtensionPoint` directly
+  - [ ] Copy essential functionality from colcon-cargo:
+    - [ ] `async build()` method structure
+    - [ ] `add_arguments()` for `--cargo-args`
+    - [ ] CARGO_EXECUTABLE discovery
+  - [ ] Remove all config.toml management code:
+    - [ ] Delete `write_cargo_config_toml()` function
+    - [ ] Delete `find_workspace_cargo_packages()` function
+    - [ ] Delete `find_installed_cargo_packages()` function
+  - [ ] Simplify to pure orchestration (~100 lines total):
+    - [ ] Check for cargo-ros2 existence
+    - [ ] Set up AMENT_PREFIX_PATH environment hook
+    - [ ] Invoke `cargo ros2 ament-build` command
+    - [ ] Create environment scripts
+
+**Result**: colcon-ros-cargo becomes simple delegation layer with no config.toml logic.
+
+#### Phase 2: Enhance cargo-ros2 to Own config.toml
+
+**Tasks**:
+
+- [ ] Add `--lookup-in-workspace` flag to `cargo ros2 ament-build`
+  - [ ] Update `Ros2Command::AmentBuild` struct in `cargo-ros2/src/main.rs`
+  - [ ] Add `lookup_in_workspace: bool` field
+  - [ ] Update `ament_build()` function signature
+
+- [ ] Port package discovery functions to Rust
+  - [ ] Add `discover_workspace_packages()` in `cargo-ros2/src/lib.rs`
+    - [ ] Walk workspace directory recursively
+    - [ ] Find all `Cargo.toml` files
+    - [ ] Skip `build/` dirs (has `COLCON_IGNORE`)
+    - [ ] Skip `install/` dirs (has `setup.sh`)
+    - [ ] Extract package name from `[package]` section
+    - [ ] Return `HashMap<String, PathBuf>` mapping package names to paths
+  - [ ] Add `discover_installed_ament_packages()` in `cargo-ros2/src/lib.rs`
+    - [ ] Parse `AMENT_PREFIX_PATH` environment variable
+    - [ ] For each prefix, check `share/ament_index/resource_index/rust_packages/`
+    - [ ] Return `HashMap<String, PathBuf>` mapping package names to `prefix/share/pkg/rust`
+
+- [ ] Unify config.toml writing in `ament_build()` function
+  - [ ] Collect workspace packages (if `--lookup-in-workspace`)
+  - [ ] Collect installed ament packages (from env)
+  - [ ] Generate bindings (adds to patches via `workflow.run()`)
+  - [ ] **Single call to `patch_cargo_config()`** with all patches combined
+  - [ ] Ensure idempotent behavior (same patches = same output)
+
+**Implementation**:
+
+```rust
+// In cargo-ros2/src/main.rs
+fn ament_build(ctx, install_base, release, lookup_workspace, cargo_args) -> Result<()> {
+    println!("Building and installing package to ament index...");
+
+    // Step 1: Collect all patches BEFORE generating bindings
+    let mut all_patches = HashMap::new();
+
+    // 1a. Workspace packages (if --lookup-in-workspace)
+    if lookup_workspace {
+        let workspace_pkgs = discover_workspace_packages(&ctx.project_root)?;
+        if ctx.verbose {
+            eprintln!("Found {} workspace packages", workspace_pkgs.len());
+        }
+        all_patches.extend(workspace_pkgs);
+    }
+
+    // 1b. Installed ament packages
+    let installed_pkgs = discover_installed_ament_packages()?;
+    if ctx.verbose {
+        eprintln!("Found {} installed ament packages", installed_pkgs.len());
+    }
+    all_patches.extend(installed_pkgs);
+
+    // Step 2: Generate bindings (workflow will add to patches)
+    if ctx.verbose {
+        eprintln!("Step 1: Generating ROS 2 bindings...");
+    }
+    ctx.run(true)?; // bindings_only = true
+
+    // Get generated packages from workflow
+    // (workflow already stores them, we need to retrieve)
+    let generated_packages = ctx.get_generated_packages()?;
+    all_patches.extend(generated_packages);
+
+    // Step 3: Write unified config.toml (SINGLE WRITE)
+    if ctx.verbose {
+        eprintln!("Step 2: Patching .cargo/config.toml with {} packages...", all_patches.len());
+    }
+    ctx.patch_cargo_config(&all_patches)?;
+
+    // Step 4: Build package
+    // ... rest unchanged
+}
+```
+
+**Result**: cargo-ros2 manages ALL config.toml patching with full context.
+
+#### Phase 3: Update colcon-ros-cargo Integration
+
+**Tasks**:
+
+- [ ] Pass `--lookup-in-workspace` flag from colcon to cargo-ros2
+  - [ ] Update `_build_cmd()` in `colcon-ros-cargo/colcon_ros_cargo/task/ament_cargo/build.py`
+  - [ ] Check if `args.lookup_in_workspace` is set
+  - [ ] Add `--lookup-in-workspace` to cargo-ros2 command
+
+**Example**:
+
+```python
+def _build_cmd(self, cargo_args):
+    args = self.context.args
+    cmd = ['cargo', 'ros2', 'ament-build',
+           '--install-base', args.install_base]
+
+    # Pass through lookup-in-workspace flag
+    if args.lookup_in_workspace:
+        cmd.append('--lookup-in-workspace')
+
+    if '--release' in cargo_args:
+        cmd.append('--release')
+
+    # Pass through other cargo args
+    non_release_args = [arg for arg in cargo_args if arg != '--release']
+    if non_release_args:
+        cmd.extend(non_release_args)
+
+    return cmd
+```
+
+**Result**: Simple delegation, cargo-ros2 handles everything.
+
+#### Testing Strategy
+
+- [ ] **Unit Tests** (~10 new tests)
+  - [ ] Test `discover_workspace_packages()` with mock workspace
+  - [ ] Test skipping build/install directories
+  - [ ] Test `discover_installed_ament_packages()` with mock AMENT_PREFIX_PATH
+  - [ ] Test handling missing environment variable
+  - [ ] Test unified patch collection in `ament_build()`
+
+- [ ] **Integration Tests** (~5 new tests)
+  - [ ] Test single package build (no workspace deps)
+  - [ ] Test multi-package workspace build
+  - [ ] Test with system ROS packages only
+  - [ ] Test mixed workspace + system packages
+  - [ ] Test rebuild with cache hits
+
+- [ ] **Colcon Integration Tests** (~3 tests)
+  - [ ] Test `colcon build` with simple package
+  - [ ] Test `colcon build` with multiple packages
+  - [ ] Test `colcon build --packages-select` selective build
+
+- [ ] **Regression Tests**
+  - [ ] Verify no config.toml conflicts (compare before/after)
+  - [ ] Verify workspace package precedence over system packages
+  - [ ] Verify all patches present in final config.toml
+  - [ ] Verify complex_workspace still builds successfully
+
+#### File Locking (Optional Enhancement)
+
+To handle parallel colcon builds writing config.toml simultaneously:
+
+- [ ] Add file locking to `ConfigPatcher::save()`
+  - [ ] Add `fs4` crate dependency for cross-platform file locking
+  - [ ] Acquire exclusive lock before writing
+  - [ ] Hold lock until write complete
+  - [ ] Release lock automatically via RAII
+
+```rust
+use fs4::FileExt;
+
+impl ConfigPatcher {
+    pub fn save(&self) -> Result<()> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&self.config_path)?;
+
+        file.lock_exclusive()?;  // Block until lock acquired
+
+        let content = toml::to_string_pretty(&self.config)?;
+        file.write_all(content.as_bytes())?;
+
+        file.unlock()?;
+        Ok(())
+    }
+}
+```
+
+#### Acceptance Criteria
+
+**Functional**:
+```bash
+# Test 1: Single package build
+colcon build --packages-select my_robot
+# → config.toml has all necessary patches ✓
+# → No conflicts or overwrites ✓
+# → Builds successfully ✓
+
+# Test 2: Multi-package workspace
+colcon build
+# → Workspace packages patched to workspace paths ✓
+# → System packages patched to generated bindings ✓
+# → No race conditions ✓
+
+# Test 3: Parallel builds
+colcon build -j8
+# → File locking prevents conflicts ✓
+# → All packages build successfully ✓
+
+# Test 4: Incremental rebuild
+colcon build  # first build
+touch my_robot/src/main.rs
+colcon build  # second build
+# → Cache hit for bindings ✓
+# → Fast incremental build <5s ✓
+```
+
+**Code Quality**:
+```bash
+just test
+# → All new tests pass ✓
+# → No regressions ✓
+
+just quality
+# → cargo fmt passes ✓
+# → cargo clippy passes ✓
+# → Zero warnings ✓
+```
+
+#### Benefits
+
+✅ **No more config.toml conflicts** - single writer
+✅ **Simpler colcon-ros-cargo** - ~100 lines vs 182
+✅ **One less dependency** - remove colcon-cargo
+✅ **All Rust logic in one place** - easier to maintain
+✅ **Deterministic behavior** - no race conditions
+✅ **Better caching** - cargo-ros2 has full context
+✅ **Workspace packages take precedence** - deterministic shadowing
+
+#### Files Modified
+
+**colcon-ros-cargo** (~150 lines changed):
+- `setup.cfg` - Remove dependencies
+- `colcon_ros_cargo/task/ament_cargo/build.py` - Complete rewrite
+
+**cargo-ros2** (~300 lines added):
+- `cargo-ros2/src/main.rs` - Add flag, update ament_build()
+- `cargo-ros2/src/lib.rs` - Add discovery functions
+- `cargo-ros2/src/workflow.rs` - Update patch collection
+
+**Tests** (~400 lines added):
+- `cargo-ros2/tests/workspace_discovery_tests.rs` - New test file
+- `colcon-ros-cargo/test/test_refactored_build.py` - New test file
+
+#### Implementation Order
+
+**Week 1, Days 1-3**: Implement discovery functions in cargo-ros2
+- Port `discover_workspace_packages()` from Python to Rust
+- Port `discover_installed_ament_packages()` from Python to Rust
+- Add unit tests
+- Add `--lookup-in-workspace` flag
+
+**Week 1, Days 4-5**: Unify config.toml writing
+- Modify `ament_build()` to collect all patches
+- Ensure single write to config.toml
+- Add integration tests
+
+**Week 2, Days 1-2**: Simplify colcon-ros-cargo
+- Remove colcon-cargo inheritance
+- Rewrite as pure orchestration
+- Remove config.toml code
+- Update setup.cfg
+
+**Week 2, Days 3-4**: Testing
+- Run full test suite
+- Test with complex_workspace
+- Test with colcon
+- Performance testing
+
+**Week 2, Day 5**: Documentation and cleanup
+- Update README files
+- Update architecture docs
+- Add migration notes
+- Clean up any warnings
+
+#### Success Metrics
+
+- [ ] Zero config.toml race conditions
+- [ ] colcon-ros-cargo reduced from 182 to ~100 lines
+- [ ] All tests passing (including new ones)
+- [ ] complex_workspace builds successfully
+- [ ] Documentation updated
+- [ ] No performance regression (<5% slower acceptable)
+
 ### Subphase 4.2: Multi-Distro Support (1 week)
 
 - [ ] ROS distro detection
