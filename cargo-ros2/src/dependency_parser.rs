@@ -31,12 +31,21 @@ impl DependencyParser {
 
     /// Discover ROS 2 dependencies from a Cargo project
     pub fn discover_dependencies(&self, project_root: &Path) -> Result<Vec<RosDependency>> {
-        // Run cargo metadata to get dependency information
-        let metadata = MetadataCommand::new()
-            .current_dir(project_root)
-            .exec()
-            .wrap_err("Failed to run cargo metadata")?;
+        // Try cargo metadata first (for full dependency graph)
+        // If it fails (e.g., due to yanked dependencies), fall back to manual parsing
+        let metadata_result = MetadataCommand::new().current_dir(project_root).exec();
 
+        match metadata_result {
+            Ok(metadata) => self.discover_from_metadata(&metadata),
+            Err(_) => self.discover_from_cargo_toml(project_root),
+        }
+    }
+
+    /// Discover dependencies using cargo metadata (full dependency graph)
+    fn discover_from_metadata(
+        &self,
+        metadata: &cargo_metadata::Metadata,
+    ) -> Result<Vec<RosDependency>> {
         // Find the root package (the workspace root or single package)
         let root_package = metadata
             .root_package()
@@ -67,6 +76,52 @@ impl DependencyParser {
                 // Find the actual package for this dependency
                 if let Some(dep_package) = metadata.packages.iter().find(|p| p.name == dep.name) {
                     queue.push_back((dep_package, false));
+                }
+            }
+        }
+
+        Ok(dependencies)
+    }
+
+    /// Discover dependencies by parsing Cargo.toml directly (fallback when metadata fails)
+    /// This only discovers direct dependencies, which is sufficient for initial binding generation
+    fn discover_from_cargo_toml(&self, project_root: &Path) -> Result<Vec<RosDependency>> {
+        use std::fs;
+
+        let cargo_toml_path = project_root.join("Cargo.toml");
+        let contents =
+            fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
+
+        let mut dependencies = Vec::new();
+
+        // Simple parsing: look for lines in [dependencies] section
+        let mut in_dependencies = false;
+        for line in contents.lines() {
+            let trimmed = line.trim();
+
+            // Check for section headers
+            if trimmed.starts_with('[') {
+                in_dependencies = trimmed == "[dependencies]";
+                continue;
+            }
+
+            // Skip empty lines and comments
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            // Parse dependency line
+            if in_dependencies {
+                if let Some(eq_pos) = trimmed.find('=') {
+                    let dep_name = trimmed[..eq_pos].trim().to_string();
+
+                    // Check if this is a known ROS package
+                    if self.is_ros_package(&dep_name) {
+                        dependencies.push(RosDependency {
+                            name: dep_name,
+                            direct: true, // All discovered via Cargo.toml are direct
+                        });
+                    }
                 }
             }
         }
