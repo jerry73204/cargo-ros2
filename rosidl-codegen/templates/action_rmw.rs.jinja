@@ -2,7 +2,7 @@
 // Package: {{ package_name }}
 // Action: {{ action_name }}
 
-use serde::{Deserialize, Serialize};
+
 use crate::rosidl_runtime_rs;
 
 // Goal message
@@ -29,7 +29,7 @@ pub mod goal {
     }
 
     #[repr(C)]
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq)]
     pub struct {{ action_name }}Goal {
         {% for field in goal_fields %}
         pub {{ field.name }}: {{ field.rust_type }},
@@ -121,7 +121,7 @@ pub mod result {
     }
 
     #[repr(C)]
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq)]
     pub struct {{ action_name }}Result {
         {% for field in result_fields %}
         pub {{ field.name }}: {{ field.rust_type }},
@@ -213,7 +213,7 @@ pub mod feedback {
     }
 
     #[repr(C)]
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq)]
     pub struct {{ action_name }}Feedback {
         {% for field in feedback_fields %}
         pub {{ field.name }}: {{ field.rust_type }},

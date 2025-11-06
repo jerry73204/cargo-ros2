@@ -36,7 +36,39 @@ pub mod rosidl_runtime_rs {
     }
 
     #[repr(C)]
+    #[derive(Debug, Clone, PartialEq)]
     pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }
+
+    /// ROS string type (stub - actual implementation in real rosidl_runtime_rs)
+    #[repr(C)]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct String { _phantom: std::marker::PhantomData<u8> }
+
+    // Stub conversions between Sequence and Vec (for compilation only - replace with real rosidl_runtime_rs)
+    impl<T> From<Sequence<T>> for Vec<T> {
+        fn from(_seq: Sequence<T>) -> Self {
+            panic!("Stub implementation - use real rosidl_runtime_rs crate")
+        }
+    }
+
+    impl<T> From<Vec<T>> for Sequence<T> {
+        fn from(_vec: Vec<T>) -> Self {
+            panic!("Stub implementation - use real rosidl_runtime_rs crate")
+        }
+    }
+
+    // Stub conversion for String
+    impl From<String> for std::string::String {
+        fn from(_s: String) -> Self {
+            panic!("Stub implementation - use real rosidl_runtime_rs crate")
+        }
+    }
+
+    impl From<std::string::String> for String {
+        fn from(_s: std::string::String) -> Self {
+            panic!("Stub implementation - use real rosidl_runtime_rs crate")
+        }
+    }
 }
 
 // FFI layer at package root (conflict-free)

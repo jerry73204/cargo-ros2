@@ -2,7 +2,6 @@
 // Package: {{ package_name }}
 // Message: {{ message_name }}
 
-use serde::{Deserialize, Serialize};
 use crate::rosidl_runtime_rs;
 
 {% for constant in constants %}
@@ -24,8 +23,10 @@ extern "C" {
     fn {{ package_name }}__msg__{{ message_name }}__Sequence__copy(in_seq: &rosidl_runtime_rs::Sequence<{{ message_name }}>, out_seq: *mut rosidl_runtime_rs::Sequence<{{ message_name }}>) -> bool;
 }
 
+// RMW types are C-compatible FFI types and don't need serialization
+// Use the idiomatic layer if you need Serialize/Deserialize
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct {{ message_name }} {
     {% for field in fields %}
     pub {{ field.name }}: {{ field.rust_type }},

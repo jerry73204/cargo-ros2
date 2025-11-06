@@ -9,7 +9,8 @@ use crate::ament::Package;
 use eyre::{Result, WrapErr};
 use rosidl_codegen::{
     generate_action_package, generate_message_package, generate_service_package,
-    utils::extract_dependencies, GeneratedPackage,
+    utils::{extract_dependencies, to_snake_case},
+    GeneratedPackage,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -163,11 +164,11 @@ fn write_generated_package(
     std::fs::create_dir_all(&ffi_msg_dir)?;
 
     // Write FFI message to src/ffi/msg/
-    let rmw_file = ffi_msg_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    let rmw_file = ffi_msg_dir.join(format!("{}_rmw.rs", to_snake_case(name)));
     std::fs::write(&rmw_file, &generated.message_rmw)?;
 
     // Write idiomatic message to src/msg/
-    let idiomatic_file = msg_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
+    let idiomatic_file = msg_dir.join(format!("{}_idiomatic.rs", to_snake_case(name)));
     std::fs::write(&idiomatic_file, &generated.message_idiomatic)?;
 
     Ok(())
@@ -188,11 +189,11 @@ fn write_generated_service(
     std::fs::create_dir_all(&ffi_srv_dir)?;
 
     // Write FFI service to src/ffi/srv/
-    let rmw_file = ffi_srv_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    let rmw_file = ffi_srv_dir.join(format!("{}_rmw.rs", to_snake_case(name)));
     std::fs::write(&rmw_file, &generated.service_rmw)?;
 
     // Write idiomatic service to src/srv/
-    let idiomatic_file = srv_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
+    let idiomatic_file = srv_dir.join(format!("{}_idiomatic.rs", to_snake_case(name)));
     std::fs::write(&idiomatic_file, &generated.service_idiomatic)?;
 
     Ok(())
@@ -213,11 +214,11 @@ fn write_generated_action(
     std::fs::create_dir_all(&ffi_action_dir)?;
 
     // Write FFI action to src/ffi/action/
-    let rmw_file = ffi_action_dir.join(format!("{}_rmw.rs", name.to_lowercase()));
+    let rmw_file = ffi_action_dir.join(format!("{}_rmw.rs", to_snake_case(name)));
     std::fs::write(&rmw_file, &generated.action_rmw)?;
 
     // Write idiomatic action to src/action/
-    let idiomatic_file = action_dir.join(format!("{}_idiomatic.rs", name.to_lowercase()));
+    let idiomatic_file = action_dir.join(format!("{}_idiomatic.rs", to_snake_case(name)));
     std::fs::write(&idiomatic_file, &generated.action_idiomatic)?;
 
     Ok(())
@@ -271,7 +272,44 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     lib_rs.push_str("    }\n\n");
     lib_rs.push_str("    /// C-compatible sequence type\n");
     lib_rs.push_str("    #[repr(C)]\n");
-    lib_rs.push_str("    pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }\n");
+    lib_rs.push_str("    #[derive(Debug, Clone, PartialEq)]\n");
+    lib_rs.push_str("    pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }\n\n");
+    lib_rs.push_str(
+        "    /// ROS string type (stub - actual implementation in real rosidl_runtime_rs)\n",
+    );
+    lib_rs.push_str("    #[repr(C)]\n");
+    lib_rs.push_str("    #[derive(Debug, Clone, PartialEq)]\n");
+    lib_rs.push_str("    pub struct String { _phantom: std::marker::PhantomData<u8> }\n\n");
+    lib_rs.push_str("    // Stub conversions between Sequence and Vec (for compilation only - replace with real rosidl_runtime_rs)\n");
+    lib_rs.push_str("    impl<T> From<Sequence<T>> for Vec<T> {\n");
+    lib_rs.push_str("        fn from(_seq: Sequence<T>) -> Self {\n");
+    lib_rs.push_str(
+        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
+    );
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    impl<T> From<Vec<T>> for Sequence<T> {\n");
+    lib_rs.push_str("        fn from(_vec: Vec<T>) -> Self {\n");
+    lib_rs.push_str(
+        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
+    );
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    // Stub conversion for String\n");
+    lib_rs.push_str("    impl From<String> for std::string::String {\n");
+    lib_rs.push_str("        fn from(_s: String) -> Self {\n");
+    lib_rs.push_str(
+        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
+    );
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    impl From<std::string::String> for String {\n");
+    lib_rs.push_str("        fn from(_s: std::string::String) -> Self {\n");
+    lib_rs.push_str(
+        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
+    );
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n");
     lib_rs.push_str("}\n\n");
 
     // Add top-level FFI module containing all FFI types
@@ -288,7 +326,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
             lib_rs.push_str("    pub mod msg {\n");
             lib_rs.push_str("        use super::*;\n");
             for msg_name in &package.interfaces.messages {
-                let module_name = msg_name.to_lowercase();
+                let module_name = to_snake_case(msg_name);
                 // Files are in src/ffi/msg/, inline module context is also ffi/msg/
                 lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
                 lib_rs.push_str(&format!("        pub mod {};\n", module_name));
@@ -301,7 +339,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
             lib_rs.push_str("    pub mod srv {\n");
             lib_rs.push_str("        use super::*;\n");
             for srv_name in &package.interfaces.services {
-                let module_name = srv_name.to_lowercase();
+                let module_name = to_snake_case(srv_name);
                 // Files are in src/ffi/srv/, inline module context is also ffi/srv/
                 lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
                 lib_rs.push_str(&format!("        pub mod {};\n", module_name));
@@ -314,7 +352,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
             lib_rs.push_str("    pub mod action {\n");
             lib_rs.push_str("        use super::*;\n");
             for action_name in &package.interfaces.actions {
-                let module_name = action_name.to_lowercase();
+                let module_name = to_snake_case(action_name);
                 // Files are in src/ffi/action/, inline module context is also ffi/action/
                 lib_rs.push_str(&format!("        #[path = \"{}_rmw.rs\"]\n", module_name));
                 lib_rs.push_str(&format!("        pub mod {};\n", module_name));
@@ -330,7 +368,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
         lib_rs.push_str("pub mod msg {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
         for msg_name in &package.interfaces.messages {
-            let module_name = msg_name.to_lowercase();
+            let module_name = to_snake_case(msg_name);
             // Files are in src/msg/, inline module context is also msg/
             lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
@@ -343,7 +381,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
         lib_rs.push_str("pub mod srv {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
         for srv_name in &package.interfaces.services {
-            let module_name = srv_name.to_lowercase();
+            let module_name = to_snake_case(srv_name);
             // Files are in src/srv/, inline module context is also srv/
             lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
@@ -356,7 +394,7 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
         lib_rs.push_str("pub mod action {\n");
         lib_rs.push_str("    use super::rosidl_runtime_rs;\n\n");
         for action_name in &package.interfaces.actions {
-            let module_name = action_name.to_lowercase();
+            let module_name = to_snake_case(action_name);
             // Files are in src/action/, inline module context is also action/
             lib_rs.push_str(&format!("    #[path = \"{}_idiomatic.rs\"]\n", module_name));
             lib_rs.push_str(&format!("    pub mod {};\n", module_name));
