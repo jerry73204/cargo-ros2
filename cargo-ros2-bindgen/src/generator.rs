@@ -41,8 +41,155 @@ pub struct GeneratedRustPackage {
     pub action_count: usize,
 }
 
+/// Ensure rosidl_runtime_rs crate exists in the output directory
+/// This shared crate is generated once and used by all packages
+fn ensure_rosidl_runtime_rs(output_dir: &Path) -> Result<()> {
+    let runtime_rs_dir = output_dir.join("rosidl_runtime_rs");
+
+    // If it already exists, no need to copy
+    if runtime_rs_dir.exists() {
+        return Ok(());
+    }
+
+    // Find the source rosidl_runtime_rs directory
+    // Try multiple search strategies:
+    let current_exe = std::env::current_exe().wrap_err("Failed to get current executable path")?;
+    let current_dir = std::env::current_dir().wrap_err("Failed to get current directory")?;
+
+    // Try multiple possible paths for the source crate
+    let mut possible_paths = vec![];
+
+    // 1. Environment variable (highest priority)
+    if let Ok(env_path) = std::env::var("ROSIDL_RUNTIME_RS_PATH") {
+        possible_paths.push(PathBuf::from(env_path));
+    }
+
+    // 2. If running from cargo build in workspace (3 levels up from target/release/cargo-ros2-bindgen)
+    if let Some(workspace_root) = current_exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
+        possible_paths.push(workspace_root.join("rosidl-runtime-rs"));
+    }
+
+    // 3. Search upward from current directory to find cargo-ros2 workspace
+    let mut search_dir = current_dir.as_path();
+    for _ in 0..10 {
+        // Limit search depth
+        possible_paths.push(search_dir.join("rosidl-runtime-rs"));
+        if search_dir.join("Cargo.toml").exists() {
+            // Check if this is the cargo-ros2 workspace by looking for rosidl-runtime-rs
+            let candidate = search_dir.join("rosidl-runtime-rs");
+            if candidate.exists() {
+                possible_paths.insert(0, candidate); // Prioritize this find
+                break;
+            }
+        }
+        if let Some(parent) = search_dir.parent() {
+            search_dir = parent;
+        } else {
+            break;
+        }
+    }
+
+    // 4. Fallback: try current directory
+    possible_paths.push(PathBuf::from("rosidl-runtime-rs"));
+
+    let source_dir = possible_paths
+        .into_iter()
+        .find(|p| p.exists() && p.join("Cargo.toml").exists())
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Could not find rosidl-runtime-rs source directory.\n\
+             Searched paths:\n\
+             - Environment variable: ROSIDL_RUNTIME_RS_PATH\n\
+             - Relative to executable: {:?}\n\
+             - Upward from current directory: {:?}\n\
+             Please ensure rosidl-runtime-rs exists in the cargo-ros2 workspace,\n\
+             or set ROSIDL_RUNTIME_RS_PATH environment variable.",
+                current_exe,
+                current_dir
+            )
+        })?;
+
+    // Copy the entire directory
+    copy_dir_all(&source_dir, &runtime_rs_dir).wrap_err_with(|| {
+        format!(
+            "Failed to copy rosidl_runtime_rs from {} to {}",
+            source_dir.display(),
+            runtime_rs_dir.display()
+        )
+    })?;
+
+    // Fix Cargo.toml to remove workspace inheritance
+    fix_cargo_toml_workspace_inheritance(&runtime_rs_dir)?;
+
+    Ok(())
+}
+
+/// Fix Cargo.toml by replacing workspace inheritance with explicit values
+fn fix_cargo_toml_workspace_inheritance(crate_dir: &Path) -> Result<()> {
+    let cargo_toml_path = crate_dir.join("Cargo.toml");
+    let content =
+        std::fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
+
+    // Replace workspace inheritance with explicit values
+    // Also fix package name to use underscore (rosidl_runtime_rs) instead of dash
+    let fixed_content = content
+        .replace(
+            "name = \"rosidl-runtime-rs\"",
+            "name = \"rosidl_runtime_rs\"",
+        )
+        .replace("version.workspace = true", "version = \"0.1.0\"")
+        .replace("authors.workspace = true", "authors = []")
+        .replace("edition.workspace = true", "edition = \"2021\"")
+        .replace(
+            "license.workspace = true",
+            "license = \"MIT OR Apache-2.0\"",
+        )
+        .replace(
+            "repository.workspace = true",
+            "repository = \"https://github.com/your-org/cargo-ros2\"",
+        );
+
+    std::fs::write(&cargo_toml_path, fixed_content).wrap_err("Failed to write fixed Cargo.toml")?;
+
+    Ok(())
+}
+
+/// Recursively copy a directory
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        // Skip target directories and hidden files
+        if let Some(name) = entry.file_name().to_str() {
+            if name == "target" || name.starts_with('.') {
+                continue;
+            }
+        }
+
+        if file_type.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Generate Rust bindings for a ROS 2 package
 pub fn generate_package(package: &Package, output_dir: &Path) -> Result<GeneratedRustPackage> {
+    // Ensure rosidl_runtime_rs crate is available (generate once per workspace)
+    ensure_rosidl_runtime_rs(output_dir)?;
+
     let package_output = output_dir.join(&package.name);
     std::fs::create_dir_all(&package_output).wrap_err_with(|| {
         format!(
@@ -147,11 +294,11 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         action_count += 1;
     }
 
-    // Generate lib.rs that re-exports all generated code
-    generate_lib_rs(&package_output, package)?;
-
     // Remove self-dependency (package shouldn't depend on itself)
     all_dependencies.remove(&package.name);
+
+    // Generate lib.rs that re-exports all generated code
+    generate_lib_rs(&package_output, package, &all_dependencies)?;
 
     // Generate Cargo.toml for the package
     generate_cargo_toml(
@@ -249,7 +396,11 @@ fn write_generated_action(
 }
 
 /// Generate lib.rs that re-exports all generated modules
-fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
+fn generate_lib_rs(
+    output_dir: &Path,
+    package: &Package,
+    dependencies: &HashSet<String>,
+) -> Result<()> {
     let src_dir = output_dir.join("src");
     std::fs::create_dir_all(&src_dir)?;
 
@@ -257,132 +408,9 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     lib_rs.push_str("// Auto-generated Rust bindings for ROS 2 interface package\n");
     lib_rs.push_str(&format!("// Package: {}\n\n", package.name));
 
-    // Add rosidl_runtime_rs module with trait definitions
-    // TODO: Replace with dependency on real rosidl_runtime_rs crate when available
-    lib_rs.push_str("pub mod rosidl_runtime_rs {\n");
-    lib_rs.push_str("    /// Sequence allocation trait for RMW types\n");
-    lib_rs.push_str("    pub trait SequenceAlloc {\n");
-    lib_rs.push_str("        fn sequence_init(seq: &mut Sequence<Self>, size: usize) -> bool where Self: Sized;\n");
-    lib_rs.push_str("        fn sequence_fini(seq: &mut Sequence<Self>) where Self: Sized;\n");
-    lib_rs.push_str("        fn sequence_copy(in_seq: &Sequence<Self>, out_seq: &mut Sequence<Self>) -> bool where Self: Sized;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str(
-        "    /// Message trait for converting between idiomatic and RMW representations\n",
-    );
-    lib_rs.push_str("    pub trait Message {\n");
-    lib_rs.push_str("        type RmwMsg;\n");
-    lib_rs.push_str("        fn into_rmw_message(msg_cow: std::borrow::Cow<'_, Self>) -> std::borrow::Cow<'_, Self::RmwMsg>\n");
-    lib_rs.push_str("        where\n");
-    lib_rs.push_str("            Self: Sized + Clone,\n");
-    lib_rs.push_str("            Self::RmwMsg: Clone;\n");
-    lib_rs.push_str("        fn from_rmw_message(msg: Self::RmwMsg) -> Self where Self: Sized;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    /// RMW message trait with type support information\n");
-    lib_rs.push_str("    pub trait RmwMessage where Self: Sized {\n");
-    lib_rs.push_str("        const TYPE_NAME: &'static str;\n");
-    lib_rs.push_str("        fn get_type_support() -> *const std::ffi::c_void;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    /// Service trait for ROS 2 services\n");
-    lib_rs.push_str("    pub trait Service {\n");
-    lib_rs.push_str("        type Request;\n");
-    lib_rs.push_str("        type Response;\n");
-    lib_rs.push_str("        fn get_type_support() -> *const std::ffi::c_void;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    /// Action trait for ROS 2 actions\n");
-    lib_rs.push_str("    pub trait Action {\n");
-    lib_rs.push_str("        type Goal;\n");
-    lib_rs.push_str("        type Result;\n");
-    lib_rs.push_str("        type Feedback;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    /// Trait for types that have a corresponding RMW representation\n");
-    lib_rs.push_str("    /// Establishes the type relationship between idiomatic and RMW types\n");
-    lib_rs.push_str("    pub trait SequenceElement: Sized {\n");
-    lib_rs.push_str("        /// The RMW (C FFI) type corresponding to this idiomatic type\n");
-    lib_rs.push_str("        type RmwType;\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    /// C-compatible sequence type\n");
-    lib_rs.push_str("    #[repr(C)]\n");
-    lib_rs.push_str("    #[derive(Debug, Clone, PartialEq)]\n");
-    lib_rs.push_str("    pub struct Sequence<T> { _phantom: std::marker::PhantomData<T> }\n\n");
-    lib_rs.push_str(
-        "    /// ROS string type (stub - actual implementation in real rosidl_runtime_rs)\n",
-    );
-    lib_rs.push_str("    #[repr(C)]\n");
-    lib_rs.push_str("    #[derive(Debug, Clone, PartialEq)]\n");
-    lib_rs.push_str("    pub struct String { _phantom: std::marker::PhantomData<u8> }\n\n");
-    lib_rs.push_str("    // Stub conversions between Sequence and Vec (for compilation only - replace with real rosidl_runtime_rs)\n");
-    lib_rs.push_str("    impl<T> From<Sequence<T>> for Vec<T> {\n");
-    lib_rs.push_str("        fn from(_seq: Sequence<T>) -> Self {\n");
-    lib_rs.push_str(
-        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
-    );
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    impl<T> From<Vec<T>> for Sequence<T> {\n");
-    lib_rs.push_str("        fn from(_vec: Vec<T>) -> Self {\n");
-    lib_rs.push_str(
-        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
-    );
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    // Stub conversion for String\n");
-    lib_rs.push_str("    impl From<String> for std::string::String {\n");
-    lib_rs.push_str("        fn from(_s: String) -> Self {\n");
-    lib_rs.push_str(
-        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
-    );
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    impl From<std::string::String> for String {\n");
-    lib_rs.push_str("        fn from(_s: std::string::String) -> Self {\n");
-    lib_rs.push_str(
-        "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
-    );
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    // Sequence conversion methods\n");
-    lib_rs.push_str("    impl<T> Sequence<T> {\n");
-    lib_rs.push_str("        /// Create from slice with element conversion\n");
-    lib_rs.push_str("        pub fn from_slice_converted<U>(slice: &[U]) -> Self\n");
-    lib_rs.push_str("        where\n");
-    lib_rs.push_str("            U: SequenceElement<RmwType = T>,\n");
-    lib_rs.push_str("            for<'a> &'a U: Into<T>,\n");
-    lib_rs.push_str("        {\n");
-    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
-    lib_rs.push_str("        }\n\n");
-    lib_rs.push_str("        /// Convert to Vec with element conversion\n");
-    lib_rs.push_str("        pub fn to_vec_converted<U>(&self) -> Vec<U>\n");
-    lib_rs.push_str("        where\n");
-    lib_rs.push_str("            U: SequenceElement<RmwType = T>,\n");
-    lib_rs.push_str("            for<'a> &'a T: Into<U>,\n");
-    lib_rs.push_str("        {\n");
-    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    // SequenceElement implementations for primitive types\n");
-    lib_rs.push_str("    impl SequenceElement for u8 { type RmwType = u8; }\n");
-    lib_rs.push_str("    impl SequenceElement for i8 { type RmwType = i8; }\n");
-    lib_rs.push_str("    impl SequenceElement for u16 { type RmwType = u16; }\n");
-    lib_rs.push_str("    impl SequenceElement for i16 { type RmwType = i16; }\n");
-    lib_rs.push_str("    impl SequenceElement for u32 { type RmwType = u32; }\n");
-    lib_rs.push_str("    impl SequenceElement for i32 { type RmwType = i32; }\n");
-    lib_rs.push_str("    impl SequenceElement for u64 { type RmwType = u64; }\n");
-    lib_rs.push_str("    impl SequenceElement for i64 { type RmwType = i64; }\n");
-    lib_rs.push_str("    impl SequenceElement for f32 { type RmwType = f32; }\n");
-    lib_rs.push_str("    impl SequenceElement for f64 { type RmwType = f64; }\n");
-    lib_rs.push_str("    impl SequenceElement for bool { type RmwType = bool; }\n\n");
-    lib_rs.push_str("    // String conversion implementations (reference-based)\n");
-    lib_rs.push_str("    impl From<&std::string::String> for String {\n");
-    lib_rs.push_str("        fn from(_s: &std::string::String) -> Self {\n");
-    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n\n");
-    lib_rs.push_str("    impl From<&String> for std::string::String {\n");
-    lib_rs.push_str("        fn from(_s: &String) -> Self {\n");
-    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
-    lib_rs.push_str("        }\n");
-    lib_rs.push_str("    }\n");
-    lib_rs.push_str("}\n\n");
+    // Import the shared rosidl_runtime_rs crate
+    lib_rs.push_str("// Import shared runtime library for ROS 2 types and traits\n");
+    lib_rs.push_str("use rosidl_runtime_rs;\n\n");
 
     // Add top-level FFI module containing all FFI types
     let has_any_interfaces = !package.interfaces.messages.is_empty()
@@ -495,6 +523,8 @@ edition = "2021"
 [workspace]
 
 [dependencies]
+# Shared runtime library for ROS 2 types and traits
+rosidl_runtime_rs = {{ path = "../rosidl_runtime_rs" }}
 serde = {{ version = "1.0", features = ["derive"], optional = true }}
 "#,
         package_name
@@ -509,7 +539,7 @@ serde = {{ version = "1.0", features = ["derive"], optional = true }}
     for dep in dependencies {
         // Convert package name to valid crate name (replace - with _)
         let crate_name = dep.replace('-', "_");
-        cargo_toml.push_str(&format!("{} = \"*\"\n", crate_name));
+        cargo_toml.push_str(&format!("{} = {{ path = \"../{}\" }}\n", crate_name, dep));
     }
 
     // Add features section
@@ -535,6 +565,47 @@ serde = {{ version = "1.0", features = ["derive"], optional = true }}
 fn generate_build_rs(output_dir: &Path, package_name: &str) -> Result<()> {
     let build_rs = format!(
         r#"fn main() {{
+    // Add ROS library search paths from AMENT_PREFIX_PATH (for system packages)
+    if let Ok(ament_prefix_path) = std::env::var("AMENT_PREFIX_PATH") {{
+        for prefix in ament_prefix_path.split(':') {{
+            let lib_path = std::path::Path::new(prefix).join("lib");
+            if lib_path.exists() {{
+                println!("cargo:rustc-link-search=native={{}}", lib_path.display());
+            }}
+        }}
+    }}
+
+    // Also search for workspace-local install directory (for custom packages)
+    // This is critical for colcon workspaces where packages are built incrementally
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {{
+        let mut search_dir = std::path::Path::new(&manifest_dir);
+
+        // Walk up the directory tree to find workspace root
+        for _ in 0..10 {{
+            // Check if this looks like a colcon workspace root
+            let install_dir = search_dir.join("install");
+            if install_dir.exists() && install_dir.is_dir() {{
+                // Add all package lib directories from install/
+                if let Ok(entries) = std::fs::read_dir(&install_dir) {{
+                    for entry in entries.flatten() {{
+                        let lib_path = entry.path().join("lib");
+                        if lib_path.exists() {{
+                            println!("cargo:rustc-link-search=native={{}}", lib_path.display());
+                        }}
+                    }}
+                }}
+                break;
+            }}
+
+            // Move up one directory
+            if let Some(parent) = search_dir.parent() {{
+                search_dir = parent;
+            }} else {{
+                break;
+            }}
+        }}
+    }}
+
     // Link against ROS 2 C libraries
     println!("cargo:rustc-link-lib={package}__rosidl_typesupport_c");
     println!("cargo:rustc-link-lib={package}__rosidl_generator_c");
@@ -611,7 +682,8 @@ mod tests {
         let output_dir = temp_dir.path().join("output");
         std::fs::create_dir_all(&output_dir).unwrap();
 
-        generate_lib_rs(&output_dir, &package).unwrap();
+        let deps = HashSet::new();
+        generate_lib_rs(&output_dir, &package, &deps).unwrap();
 
         let lib_rs_content =
             std::fs::read_to_string(output_dir.join("src").join("lib.rs")).unwrap();
