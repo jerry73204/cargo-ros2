@@ -561,18 +561,20 @@ fn ament_build(
     }
 
     // Step 7: Install using ament installer
-    let package_install_base = install_base.join(&package_name);
+    // Note: install_base already includes the package name (e.g., install/robot_controller)
+    let profile = if release { "release" } else { "debug" };
     let installer = AmentInstaller::new(
-        package_install_base.clone(),
+        install_base.to_path_buf(),
         package_name.clone(),
         ctx.project_root.clone(),
         ctx.verbose,
+        profile.to_string(),
     );
 
     installer.install(is_library)?;
 
     println!("✓ Installation complete!");
-    println!("  Install location: {}", package_install_base.display());
+    println!("  Install location: {}", install_base.display());
     println!("  Package name: {}", package_name);
     println!("  Type: {}", if is_library { "library" } else { "binary" });
 

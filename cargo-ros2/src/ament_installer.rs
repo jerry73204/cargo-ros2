@@ -18,6 +18,8 @@ pub struct AmentInstaller {
     project_root: PathBuf,
     /// Verbose output
     verbose: bool,
+    /// Build profile (debug or release)
+    profile: String,
 }
 
 impl AmentInstaller {
@@ -27,12 +29,14 @@ impl AmentInstaller {
         package_name: String,
         project_root: PathBuf,
         verbose: bool,
+        profile: String,
     ) -> Self {
         Self {
             install_base,
             package_name,
             project_root,
             verbose,
+            profile,
         }
     }
 
@@ -158,7 +162,7 @@ impl AmentInstaller {
 
     /// Install binaries to lib directory
     fn install_binaries(&self) -> Result<()> {
-        let target_dir = self.project_root.join("target").join("release");
+        let target_dir = self.project_root.join("target").join(&self.profile);
         let cargo_toml_path = self.project_root.join("Cargo.toml");
 
         // Parse Cargo.toml to find binary names
@@ -350,6 +354,7 @@ mod tests {
             "test_pkg".to_string(),
             project_root,
             false,
+            "debug".to_string(),
         );
 
         assert_eq!(installer.lib_dir(), install_base.join("lib"));
@@ -425,6 +430,7 @@ edition = "2021"
             "my-pkg".to_string(),
             temp_dir.path().to_path_buf(),
             false,
+            "debug".to_string(),
         );
 
         let cargo_toml = r#"
@@ -454,6 +460,7 @@ path = "src/other.rs"
             "test".to_string(),
             temp_dir.path().to_path_buf(),
             false,
+            "debug".to_string(),
         );
 
         assert_eq!(
