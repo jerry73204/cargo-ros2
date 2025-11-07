@@ -116,6 +116,80 @@ cargo ros2 build
 5. **Incremental**: Smart caching avoids regeneration (checksum-based)
 6. **colcon-Friendly**: Drop-in replacement for current cargo invocations
 
+## Recent Architectural Improvements (2025-11-07)
+
+### Shared Runtime Library (`rosidl_runtime_rs`)
+
+Eliminated 100+ line stub modules duplicated across every generated package by creating a single shared runtime library:
+
+**Key Components**:
+1. **FFI Layer** (`ffi.rs`): Raw C bindings to `rosidl_runtime_c`
+   - String operations (init, fini, assign, copy, are_equal)
+   - Primitive sequence operations for all types (f32, f64, i8-i64, u8-u64, bool)
+
+2. **Idiomatic API** (`string.rs`, `sequence.rs`): Safe Rust wrappers
+   - Automatic memory management via Drop
+   - Conversions to/from Rust std types
+   - Clone and PartialEq implementations
+
+3. **Core Traits** (`traits.rs`):
+   - `SequenceElement`: Type relationships (idiomatic ↔ RMW)
+   - `SequenceAlloc`: Message-specific sequence operations
+   - `Message`, `RmwMessage`, `Service`, `Action`: Core ROS type traits
+
+**Benefits**:
+- **Code reuse**: Single implementation shared by all packages
+- **Maintainability**: One place to fix bugs and add features
+- **Smaller binaries**: No duplicate implementations
+
+### Workspace-Aware Library Linking
+
+Fixed linker errors by making `build.rs` search workspace-local `install/` directories:
+
+```rust
+// Walks up directory tree to find colcon workspace root
+if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+    for _ in 0..10 {
+        let install_dir = search_dir.join("install");
+        if install_dir.exists() {
+            // Add all install/*/lib directories to linker search path
+            for entry in std::fs::read_dir(&install_dir) {
+                let lib_path = entry.path().join("lib");
+                println!("cargo:rustc-link-search=native={}", lib_path.display());
+            }
+        }
+    }
+}
+```
+
+**Impact**: Packages can now find custom interface libraries built earlier in the colcon workspace, eliminating "library not found" linker errors.
+
+### Profile-Aware Installation
+
+Fixed binary installation by passing build profile (debug/release) to installer:
+
+**Before**: Hardcoded `target/release`, causing failures for debug builds
+**After**: Uses `target/{profile}` based on `--release` flag
+
+```rust
+let profile = if release { "release" } else { "debug" };
+let target_dir = self.project_root.join("target").join(&self.profile);
+```
+
+### colcon Integration Fix
+
+Fixed false-failure reporting in `colcon-ros-cargo` build task:
+
+**Problem**: Returned `CompletedProcess` object instead of integer exit code
+**Fix**: Extract `.returncode` from result before returning
+
+```python
+result = await run(self.context, cmd, cwd=pkg_path, env=None)
+return result.returncode if result else 0  # colcon expects int, not object
+```
+
+**Result**: colcon now correctly reports "Finished" instead of "Failed" for successful builds.
+
 ## Implementation Status
 
 **Current Phase**: Phase 2 Complete! ✅
@@ -131,15 +205,23 @@ cargo ros2 build
   - **cargo-ros2-bindgen**: Standalone binding generator (13 tests)
   - **cargo-ros2**: Complete build workflow with caching (26 tests)
   - 151 total tests passing
+- ✅ **Phase 3**: Production Features (14/20 subphases)
+  - **rosidl_runtime_rs**: Shared runtime library with FFI bindings
+  - **Workspace-aware build.rs**: Finds local install/ libraries
+  - **Profile-aware installation**: Handles debug/release builds correctly
+  - **colcon integration**: Fixed false-failure reporting
+  - **Complete ament-build workflow**: Generate → Build → Install
 
 **What Works Now**:
 - Generate Rust bindings for any ROS 2 interface package
-- Discover packages from system installation
+- Discover packages from system installation and workspace
 - Intelligent SHA256-based caching
 - Automatic .cargo/config.toml patching
-- Complete CLI: `build`, `check`, `clean`
+- Complete CLI: `build`, `check`, `clean`, `ament-build`
+- Full colcon integration with proper exit codes
+- Installation to ament layout with markers and hooks
 
-**Next**: Phase 3 (Production Features) - See `docs/ROADMAP.md` for details.
+**Next**: Phase 3 completion (error handling, enhanced docs) - See `docs/ROADMAP.md`.
 
 ## Quick Reference
 
@@ -167,6 +249,9 @@ cargo ros2 check                        # ✅ Fast check (reuses bindings)
 cargo ros2 check --bindings-only        # ✅ Generate bindings only (no check)
 
 cargo ros2 clean                        # ✅ Clean bindings + cache
+
+cargo ros2 ament-build --install-base <path>  # ✅ Generate + build + install to ament layout
+cargo ros2 ament-build --install-base <path> --release  # ✅ Release build with installation
 ```
 
 **Future enhancements**:
@@ -174,7 +259,6 @@ cargo ros2 clean                        # ✅ Clean bindings + cache
 cargo ros2 test                         # Test with bindings
 cargo ros2 cache --list                 # Show cached bindings
 cargo ros2 cache --rebuild              # Force regeneration
-cargo ros2 ament-build --install-base <path>  # Generate + build + install (Phase 3+)
 ```
 
 ### Key Files
@@ -205,26 +289,86 @@ cd tmp/
 
 ### File Manipulation Tools
 
-**Prefer Claude Code tools over Bash commands** for file operations:
+**CRITICAL RULE: ALWAYS use Write/Edit tools for file operations**
 
-- ✅ **Use**: `Write` tool to create new files in `tmp/`
-- ✅ **Use**: `Edit` tool to modify files in `tmp/`
-- ✅ **Use**: `Read` tool to view file contents
-- ❌ **Avoid**: `cat`, `echo >`, `cat <<EOF`, or heredocs via Bash
+**NEVER use Bash commands for file I/O**:
+- ❌ **NEVER**: `cat > file`, `cat <<EOF`, `echo > file`, or any shell redirection
+- ✅ **ALWAYS**: Use `Write` tool to create new files
+- ✅ **ALWAYS**: Use `Edit` tool to modify existing files
+- ✅ **ALWAYS**: Use `Read` tool to view file contents
 
-**Rationale**: Claude Code's file tools provide better error handling, proper escaping, and cleaner interaction. Bash commands like `cat` and `echo` are prone to quoting issues and don't integrate well with the tool ecosystem.
+**Rationale**:
+- Claude Code's file tools provide better error handling and validation
+- Bash commands like `cat` and `echo` are prone to quoting/escaping issues
+- Write/Edit tools integrate properly with the Claude Code ecosystem
+- Clearer intent and easier to track file modifications
 
 **Example**:
 ```
-# ❌ Don't do this:
+# ❌ NEVER do this:
 Bash: cat > tmp/test.rs <<'EOF'
 fn main() { println!("test"); }
 EOF
 
-# ✅ Do this instead:
+Bash: echo "content" >> file.txt
+
+# ✅ ALWAYS do this instead:
 Write: tmp/test.rs
 Content: fn main() { println!("test"); }
+
+Edit: existing_file.txt
+old_string: old content
+new_string: new content
 ```
+
+**Exception**: Only use Bash for actual system commands (git, cargo, npm, make, colcon, etc.), never for file I/O operations.
+
+### Build and Install Workflow
+
+**CRITICAL**: After modifying code or templates, you MUST reinstall binaries to see changes take effect.
+
+#### Template Changes (Most Important!)
+
+Askama embeds templates at compile time. Simply rebuilding isn't enough - you must **clean and reinstall**:
+
+```bash
+# REQUIRED after modifying .jinja templates
+cargo clean          # Clear build cache (forces template re-embedding)
+just install         # Rebuild and install cargo-ros2 + cargo-ros2-bindgen
+```
+
+**Why this matters**:
+- Templates in `rosidl-codegen/templates/*.jinja` are embedded into `cargo-ros2-bindgen` at compile time
+- Without `cargo clean`, Askama may use cached template artifacts
+- Without reinstalling, the old binary in `~/.cargo/bin/` continues to be used
+
+#### Code Changes (Less Critical)
+
+For regular code changes (not templates):
+
+```bash
+just install         # Usually sufficient
+# OR
+cargo install --path cargo-ros2 --path cargo-ros2-bindgen  # Explicit install
+```
+
+#### Quick Development Cycle
+
+```bash
+# 1. Make changes to code/templates
+# 2. Clean and install (if templates changed)
+cargo clean && just install
+
+# 3. Test changes in workspace
+cd testing_workspaces/complex_workspace
+rm -rf src/*/target/ros2_bindings src/*/.ros2_bindgen_cache src/*/.cargo/config.toml
+just build
+
+# 4. Verify results
+# If templates still don't apply, double-check you ran `cargo clean`!
+```
+
+**Common Mistake**: Forgetting to run `just install` after making changes, then wondering why the generated code hasn't changed. The system uses installed binaries from `~/.cargo/bin/`, not the ones in `target/`.
 
 ### Code Quality
 
@@ -281,6 +425,7 @@ MIT OR Apache-2.0 (to be decided - compatible with ROS 2 ecosystem)
 
 ---
 
-**Status**: Phase 3 Near Complete - Production Features (2025-11-04)
-**Progress**: 13.5/20 subphases (68%) | 190 tests passing | Zero warnings
+**Status**: Phase 3 Near Complete - Production Features (2025-11-07)
+**Progress**: 14/20 subphases (70%) | 190+ tests passing | Zero warnings
+**Latest**: Shared rosidl_runtime_rs ✅, Workspace-aware linking ✅, colcon integration fixed ✅
 **Next**: Phase 3.4 - Enhanced Testing & Documentation, then Phase 4 - colcon Integration (see docs/ROADMAP.md)
