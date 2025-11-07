@@ -350,7 +350,7 @@ impl WorkflowContext {
         if self.verbose {
             eprintln!("Step 2: Discovering ROS dependencies from Cargo.toml...");
         }
-        let dependencies = self.discover_ros_dependencies()?;
+        let mut dependencies = self.discover_ros_dependencies()?;
 
         if dependencies.is_empty() {
             eprintln!("No ROS 2 dependencies found in Cargo.toml");
@@ -364,43 +364,90 @@ impl WorkflowContext {
             eprintln!("  Found {} ROS dependencies", dependencies.len());
         }
 
-        // Step 3: Check cache
-        if self.verbose {
-            eprintln!("Step 3: Checking cache...");
-        }
-        let to_generate = self.check_cache(&dependencies, &ament_packages)?;
+        // Step 3: Iteratively discover and generate transitive dependencies
+        let mut all_generated = Vec::new();
+        let mut seen_packages = std::collections::HashSet::new();
 
-        if self.verbose {
-            eprintln!("  {} packages need generation", to_generate.len());
-        }
-
-        // Step 4: Generate bindings (in parallel if multiple packages)
-        let generated_packages = if to_generate.len() > 1 {
-            self.generate_bindings_parallel(&to_generate, &ament_packages)?
-        } else {
-            let mut generated_packages = Vec::new();
-            for package_name in &to_generate {
-                let output_dir = self.generate_bindings(package_name)?;
-
-                // Get share dir for checksum calculation
-                if let Some(share_dir) = ament_packages.get(package_name) {
-                    self.update_cache(package_name, share_dir, output_dir.clone())?;
-                }
-
-                generated_packages.push((package_name.clone(), output_dir));
+        loop {
+            // Check cache for current set of dependencies
+            if self.verbose {
+                eprintln!(
+                    "Step 3: Checking cache for {} packages...",
+                    dependencies.len()
+                );
             }
-            generated_packages
-        };
+            let to_generate = self.check_cache(&dependencies, &ament_packages)?;
 
-        // Step 5: Patch .cargo/config.toml
-        if !generated_packages.is_empty() {
+            if to_generate.is_empty() {
+                break; // No more packages to generate
+            }
+
+            if self.verbose {
+                eprintln!("  {} packages need generation", to_generate.len());
+            }
+
+            // Generate bindings (in parallel if multiple packages)
+            let generated_packages = if to_generate.len() > 1 {
+                self.generate_bindings_parallel(&to_generate, &ament_packages)?
+            } else {
+                let mut generated_packages = Vec::new();
+                for package_name in &to_generate {
+                    let output_dir = self.generate_bindings(package_name)?;
+
+                    // Get share dir for checksum calculation
+                    if let Some(share_dir) = ament_packages.get(package_name) {
+                        self.update_cache(package_name, share_dir, output_dir.clone())?;
+                    }
+
+                    generated_packages.push((package_name.clone(), output_dir));
+                }
+                generated_packages
+            };
+
+            all_generated.extend(generated_packages.clone());
+
+            // Mark these packages as seen
+            for (pkg_name, _) in &generated_packages {
+                seen_packages.insert(pkg_name.clone());
+            }
+
+            // Discover transitive dependencies from generated packages
+            let mut new_deps = Vec::new();
+            for (pkg_name, pkg_path) in &generated_packages {
+                if let Ok(transitive_deps) = self.discover_transitive_dependencies(pkg_path) {
+                    for dep in transitive_deps {
+                        // Only add if we haven't seen it yet and it's a known ROS package
+                        if !seen_packages.contains(&dep) && ament_packages.contains_key(&dep) {
+                            new_deps.push(RosDependency {
+                                name: dep.clone(),
+                                direct: false,
+                            });
+                            seen_packages.insert(dep);
+                        }
+                    }
+                }
+            }
+
+            if new_deps.is_empty() {
+                break; // No new dependencies found
+            }
+
+            if self.verbose {
+                eprintln!("  Discovered {} transitive dependencies", new_deps.len());
+            }
+
+            dependencies = new_deps;
+        }
+
+        // Step 4: Patch .cargo/config.toml
+        if !all_generated.is_empty() {
             if self.verbose {
                 eprintln!("Step 4: Patching .cargo/config.toml...");
             }
-            self.patch_cargo_config(&generated_packages)?;
+            self.patch_cargo_config(&all_generated)?;
         }
 
-        // Step 6: Invoke cargo build (unless --bindings-only)
+        // Step 5: Invoke cargo build (unless --bindings-only)
         if !bindings_only {
             if self.verbose {
                 eprintln!("Step 5: Invoking cargo build...");
@@ -409,6 +456,45 @@ impl WorkflowContext {
         }
 
         Ok(())
+    }
+
+    /// Discover transitive dependencies from a generated package
+    fn discover_transitive_dependencies(&self, package_path: &Path) -> Result<Vec<String>> {
+        use std::fs;
+
+        let cargo_toml_path = package_path.join("Cargo.toml");
+        let contents = fs::read_to_string(&cargo_toml_path)
+            .wrap_err_with(|| format!("Failed to read {}", cargo_toml_path.display()))?;
+
+        let mut dependencies = Vec::new();
+        let mut in_dependencies = false;
+
+        for line in contents.lines() {
+            let trimmed = line.trim();
+
+            if trimmed.starts_with("[dependencies]") {
+                in_dependencies = true;
+                continue;
+            }
+
+            if trimmed.starts_with('[') {
+                in_dependencies = false;
+                continue;
+            }
+
+            if in_dependencies && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                // Extract package name (before '=' or space)
+                if let Some(pkg_name) = trimmed.split('=').next() {
+                    let pkg_name = pkg_name.trim();
+                    // Skip special entries like "serde" or "rosidl-runtime-rs"
+                    if !pkg_name.contains('-') || pkg_name.contains('_') {
+                        dependencies.push(pkg_name.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(dependencies)
     }
 
     /// Invoke cargo build

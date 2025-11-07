@@ -7,7 +7,10 @@ pub use generator::{
     generate_action_package, generate_message_package, generate_service_package,
     GeneratedActionPackage, GeneratedPackage, GeneratedServicePackage, GeneratorError,
 };
-pub use types::{escape_keyword, rust_type_for_field};
+pub use types::{
+    escape_keyword, is_array_type, is_primitive_sequence, is_primitive_type, is_sequence_type,
+    rust_type_for_field,
+};
 
 #[cfg(test)]
 mod tests {

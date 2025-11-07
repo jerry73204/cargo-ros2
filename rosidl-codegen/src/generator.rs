@@ -3,7 +3,10 @@ use crate::templates::{
     LibRsTemplate, MessageConstant, MessageIdiomaticTemplate, MessageRmwTemplate, RmwField,
     ServiceIdiomaticTemplate, ServiceRmwTemplate,
 };
-use crate::types::{constant_value_to_rust, escape_keyword, rust_type_for_field};
+use crate::types::{
+    constant_value_to_rust, escape_keyword, is_array_type, is_large_array, is_primitive_sequence,
+    is_primitive_type, is_sequence_type, rust_type_for_field,
+};
 use crate::utils::{extract_dependencies, needs_big_array};
 use askama::Template;
 use rosidl_parser::{Action, Message, Service};
@@ -72,7 +75,7 @@ pub fn generate_message_package(
         .iter()
         .map(|f| RmwField {
             name: escape_keyword(&f.name),
-            rust_type: rust_type_for_field(&f.field_type, true),
+            rust_type: rust_type_for_field(&f.field_type, true, Some(package_name)),
             default_value: f
                 .default_value
                 .as_ref()
@@ -86,7 +89,7 @@ pub fn generate_message_package(
         .iter()
         .map(|c| MessageConstant {
             name: c.name.clone(),
-            rust_type: rust_type_for_field(&c.constant_type, true),
+            rust_type: rust_type_for_field(&c.constant_type, true, Some(package_name)),
             value: constant_value_to_rust(&c.value),
         })
         .collect();
@@ -105,12 +108,17 @@ pub fn generate_message_package(
         .iter()
         .map(|f| IdiomaticField {
             name: escape_keyword(&f.name),
-            rust_type: rust_type_for_field(&f.field_type, false),
+            rust_type: rust_type_for_field(&f.field_type, false, Some(package_name)),
             default_value: f
                 .default_value
                 .as_ref()
                 .map(constant_value_to_rust)
                 .unwrap_or_default(),
+            is_sequence: is_sequence_type(&f.field_type),
+            is_primitive: is_primitive_type(&f.field_type),
+            is_primitive_sequence: is_primitive_sequence(&f.field_type),
+            is_array: is_array_type(&f.field_type),
+            is_large_array: is_large_array(&f.field_type),
         })
         .collect();
 
@@ -119,7 +127,7 @@ pub fn generate_message_package(
         .iter()
         .map(|c| MessageConstant {
             name: c.name.clone(),
-            rust_type: rust_type_for_field(&c.constant_type, false),
+            rust_type: rust_type_for_field(&c.constant_type, false, Some(package_name)),
             value: constant_value_to_rust(&c.value),
         })
         .collect();
@@ -197,7 +205,7 @@ pub fn generate_service_package(
             .iter()
             .map(|f| RmwField {
                 name: escape_keyword(&f.name),
-                rust_type: rust_type_for_field(&f.field_type, true),
+                rust_type: rust_type_for_field(&f.field_type, true, Some(package_name)),
                 default_value: f
                     .default_value
                     .as_ref()
@@ -212,12 +220,17 @@ pub fn generate_service_package(
             .iter()
             .map(|f| IdiomaticField {
                 name: escape_keyword(&f.name),
-                rust_type: rust_type_for_field(&f.field_type, false),
+                rust_type: rust_type_for_field(&f.field_type, false, Some(package_name)),
                 default_value: f
                     .default_value
                     .as_ref()
                     .map(constant_value_to_rust)
                     .unwrap_or_default(),
+                is_sequence: is_sequence_type(&f.field_type),
+                is_primitive: is_primitive_type(&f.field_type),
+                is_primitive_sequence: is_primitive_sequence(&f.field_type),
+                is_array: is_array_type(&f.field_type),
+                is_large_array: is_large_array(&f.field_type),
             })
             .collect()
     };
@@ -227,7 +240,7 @@ pub fn generate_service_package(
             .iter()
             .map(|c| MessageConstant {
                 name: c.name.clone(),
-                rust_type: rust_type_for_field(&c.constant_type, rmw_layer),
+                rust_type: rust_type_for_field(&c.constant_type, rmw_layer, Some(package_name)),
                 value: constant_value_to_rust(&c.value),
             })
             .collect()
@@ -323,7 +336,7 @@ pub fn generate_action_package(
             .iter()
             .map(|f| RmwField {
                 name: escape_keyword(&f.name),
-                rust_type: rust_type_for_field(&f.field_type, true),
+                rust_type: rust_type_for_field(&f.field_type, true, Some(package_name)),
                 default_value: f
                     .default_value
                     .as_ref()
@@ -338,12 +351,17 @@ pub fn generate_action_package(
             .iter()
             .map(|f| IdiomaticField {
                 name: escape_keyword(&f.name),
-                rust_type: rust_type_for_field(&f.field_type, false),
+                rust_type: rust_type_for_field(&f.field_type, false, Some(package_name)),
                 default_value: f
                     .default_value
                     .as_ref()
                     .map(constant_value_to_rust)
                     .unwrap_or_default(),
+                is_sequence: is_sequence_type(&f.field_type),
+                is_primitive: is_primitive_type(&f.field_type),
+                is_primitive_sequence: is_primitive_sequence(&f.field_type),
+                is_array: is_array_type(&f.field_type),
+                is_large_array: is_large_array(&f.field_type),
             })
             .collect()
     };
@@ -353,7 +371,7 @@ pub fn generate_action_package(
             .iter()
             .map(|c| MessageConstant {
                 name: c.name.clone(),
-                rust_type: rust_type_for_field(&c.constant_type, rmw_layer),
+                rust_type: rust_type_for_field(&c.constant_type, rmw_layer, Some(package_name)),
                 value: constant_value_to_rust(&c.value),
             })
             .collect()

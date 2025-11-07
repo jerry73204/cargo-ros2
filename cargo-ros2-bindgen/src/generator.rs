@@ -9,7 +9,7 @@ use crate::ament::Package;
 use eyre::{Result, WrapErr};
 use rosidl_codegen::{
     generate_action_package, generate_message_package, generate_service_package,
-    utils::{extract_dependencies, to_snake_case},
+    utils::{extract_dependencies, needs_big_array, to_snake_case},
     GeneratedPackage,
 };
 use std::collections::HashSet;
@@ -55,6 +55,7 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
     let mut service_count = 0;
     let mut action_count = 0;
     let mut all_dependencies = HashSet::new();
+    let mut package_needs_big_array = false;
 
     // For dependency tracking (cross-package references)
     let known_packages = HashSet::new(); // TODO: populate from ament index
@@ -71,6 +72,11 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         // Extract dependencies from this message
         let msg_deps = extract_dependencies(&parsed_msg);
         all_dependencies.extend(msg_deps);
+
+        // Check if this message needs big_array support
+        if needs_big_array(&parsed_msg) {
+            package_needs_big_array = true;
+        }
 
         let generated =
             generate_message_package(&package.name, msg_name, &parsed_msg, &known_packages)
@@ -94,6 +100,11 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         let resp_deps = extract_dependencies(&parsed_srv.response);
         all_dependencies.extend(req_deps);
         all_dependencies.extend(resp_deps);
+
+        // Check if request or response needs big_array support
+        if needs_big_array(&parsed_srv.request) || needs_big_array(&parsed_srv.response) {
+            package_needs_big_array = true;
+        }
 
         let generated =
             generate_service_package(&package.name, srv_name, &parsed_srv, &known_packages)
@@ -120,6 +131,14 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
         all_dependencies.extend(result_deps);
         all_dependencies.extend(feedback_deps);
 
+        // Check if goal, result, or feedback needs big_array support
+        if needs_big_array(&parsed_action.spec.goal)
+            || needs_big_array(&parsed_action.spec.result)
+            || needs_big_array(&parsed_action.spec.feedback)
+        {
+            package_needs_big_array = true;
+        }
+
         let generated =
             generate_action_package(&package.name, action_name, &parsed_action, &known_packages)
                 .wrap_err_with(|| format!("Failed to generate action: {}", action_name))?;
@@ -135,7 +154,12 @@ pub fn generate_package(package: &Package, output_dir: &Path) -> Result<Generate
     all_dependencies.remove(&package.name);
 
     // Generate Cargo.toml for the package
-    generate_cargo_toml(&package_output, &package.name, &all_dependencies)?;
+    generate_cargo_toml(
+        &package_output,
+        &package.name,
+        &all_dependencies,
+        package_needs_big_array,
+    )?;
 
     // Generate build.rs for FFI linking
     generate_build_rs(&package_output, &package.name)?;
@@ -270,6 +294,12 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     lib_rs.push_str("        type Result;\n");
     lib_rs.push_str("        type Feedback;\n");
     lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    /// Trait for types that have a corresponding RMW representation\n");
+    lib_rs.push_str("    /// Establishes the type relationship between idiomatic and RMW types\n");
+    lib_rs.push_str("    pub trait SequenceElement: Sized {\n");
+    lib_rs.push_str("        /// The RMW (C FFI) type corresponding to this idiomatic type\n");
+    lib_rs.push_str("        type RmwType;\n");
+    lib_rs.push_str("    }\n\n");
     lib_rs.push_str("    /// C-compatible sequence type\n");
     lib_rs.push_str("    #[repr(C)]\n");
     lib_rs.push_str("    #[derive(Debug, Clone, PartialEq)]\n");
@@ -308,6 +338,48 @@ fn generate_lib_rs(output_dir: &Path, package: &Package) -> Result<()> {
     lib_rs.push_str(
         "            panic!(\"Stub implementation - use real rosidl_runtime_rs crate\")\n",
     );
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    // Sequence conversion methods\n");
+    lib_rs.push_str("    impl<T> Sequence<T> {\n");
+    lib_rs.push_str("        /// Create from slice with element conversion\n");
+    lib_rs.push_str("        pub fn from_slice_converted<U>(slice: &[U]) -> Self\n");
+    lib_rs.push_str("        where\n");
+    lib_rs.push_str("            U: SequenceElement<RmwType = T>,\n");
+    lib_rs.push_str("            for<'a> &'a U: Into<T>,\n");
+    lib_rs.push_str("        {\n");
+    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
+    lib_rs.push_str("        }\n\n");
+    lib_rs.push_str("        /// Convert to Vec with element conversion\n");
+    lib_rs.push_str("        pub fn to_vec_converted<U>(&self) -> Vec<U>\n");
+    lib_rs.push_str("        where\n");
+    lib_rs.push_str("            U: SequenceElement<RmwType = T>,\n");
+    lib_rs.push_str("            for<'a> &'a T: Into<U>,\n");
+    lib_rs.push_str("        {\n");
+    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    // SequenceElement implementations for primitive types\n");
+    lib_rs.push_str("    impl SequenceElement for u8 { type RmwType = u8; }\n");
+    lib_rs.push_str("    impl SequenceElement for i8 { type RmwType = i8; }\n");
+    lib_rs.push_str("    impl SequenceElement for u16 { type RmwType = u16; }\n");
+    lib_rs.push_str("    impl SequenceElement for i16 { type RmwType = i16; }\n");
+    lib_rs.push_str("    impl SequenceElement for u32 { type RmwType = u32; }\n");
+    lib_rs.push_str("    impl SequenceElement for i32 { type RmwType = i32; }\n");
+    lib_rs.push_str("    impl SequenceElement for u64 { type RmwType = u64; }\n");
+    lib_rs.push_str("    impl SequenceElement for i64 { type RmwType = i64; }\n");
+    lib_rs.push_str("    impl SequenceElement for f32 { type RmwType = f32; }\n");
+    lib_rs.push_str("    impl SequenceElement for f64 { type RmwType = f64; }\n");
+    lib_rs.push_str("    impl SequenceElement for bool { type RmwType = bool; }\n\n");
+    lib_rs.push_str("    // String conversion implementations (reference-based)\n");
+    lib_rs.push_str("    impl From<&std::string::String> for String {\n");
+    lib_rs.push_str("        fn from(_s: &std::string::String) -> Self {\n");
+    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
+    lib_rs.push_str("        }\n");
+    lib_rs.push_str("    }\n\n");
+    lib_rs.push_str("    impl From<&String> for std::string::String {\n");
+    lib_rs.push_str("        fn from(_s: &String) -> Self {\n");
+    lib_rs.push_str("            panic!(\"Stub - implement in real rosidl_runtime_rs\")\n");
     lib_rs.push_str("        }\n");
     lib_rs.push_str("    }\n");
     lib_rs.push_str("}\n\n");
@@ -411,6 +483,7 @@ fn generate_cargo_toml(
     output_dir: &Path,
     package_name: &str,
     dependencies: &HashSet<String>,
+    needs_big_array: bool,
 ) -> Result<()> {
     let mut cargo_toml = format!(
         r#"[package]
@@ -422,16 +495,29 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-serde = {{ version = "1.0", features = ["derive"] }}
+serde = {{ version = "1.0", features = ["derive"], optional = true }}
 "#,
         package_name
     );
+
+    // Add serde-big-array if needed for arrays > 32 elements
+    if needs_big_array {
+        cargo_toml.push_str("serde-big-array = { version = \"0.5\", optional = true }\n");
+    }
 
     // Add cross-package dependencies
     for dep in dependencies {
         // Convert package name to valid crate name (replace - with _)
         let crate_name = dep.replace('-', "_");
         cargo_toml.push_str(&format!("{} = \"*\"\n", crate_name));
+    }
+
+    // Add features section
+    cargo_toml.push_str("\n[features]\ndefault = []\n");
+    if needs_big_array {
+        cargo_toml.push_str("serde = [\"dep:serde\", \"dep:serde-big-array\"]\n");
+    } else {
+        cargo_toml.push_str("serde = [\"dep:serde\"]\n");
     }
 
     cargo_toml.push_str(
@@ -538,11 +624,12 @@ mod tests {
     fn test_cargo_toml_generation() {
         let temp_dir = tempfile::tempdir().unwrap();
         let deps = HashSet::new();
-        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps).unwrap();
+        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps, false).unwrap();
 
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"test_pkg\""));
         assert!(cargo_toml.contains("serde"));
+        assert!(!cargo_toml.contains("serde-big-array"));
     }
 
     #[test]
@@ -552,13 +639,25 @@ mod tests {
         deps.insert("std_msgs".to_string());
         deps.insert("geometry_msgs".to_string());
 
-        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps).unwrap();
+        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps, false).unwrap();
 
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"test_pkg\""));
         assert!(cargo_toml.contains("serde"));
         assert!(cargo_toml.contains("std_msgs = \"*\""));
         assert!(cargo_toml.contains("geometry_msgs = \"*\""));
+    }
+
+    #[test]
+    fn test_cargo_toml_with_big_array() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let deps = HashSet::new();
+        generate_cargo_toml(temp_dir.path(), "test_pkg", &deps, true).unwrap();
+
+        let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
+        assert!(cargo_toml.contains("name = \"test_pkg\""));
+        assert!(cargo_toml.contains("serde"));
+        assert!(cargo_toml.contains("serde-big-array"));
     }
 
     #[test]

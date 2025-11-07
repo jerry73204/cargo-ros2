@@ -57,6 +57,11 @@ pub struct IdiomaticField {
     pub name: String,
     pub rust_type: String,
     pub default_value: String,
+    pub is_sequence: bool,
+    pub is_primitive: bool,
+    pub is_primitive_sequence: bool,
+    pub is_array: bool,
+    pub is_large_array: bool,
 }
 
 pub struct MessageConstant {

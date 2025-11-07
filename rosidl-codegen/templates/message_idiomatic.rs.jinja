@@ -2,16 +2,19 @@
 // Package: {{ package_name }}
 // Message: {{ message_name }}
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 {% for constant in constants %}
 pub const {{ constant.name }}: {{ constant.rust_type }} = {{ constant.value }};
 {% endfor %}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct {{ message_name }} {
     {% for field in fields %}
-    pub {{ field.name }}: {{ field.rust_type }},
+    {% if field.is_large_array %}#[cfg_attr(feature = "serde", serde(with = "serde_big_array::BigArray"))]
+    {% endif %}pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
 }
 
@@ -28,24 +31,72 @@ impl Default for {{ message_name }} {
     }
 }
 
-// Conversion between FFI and idiomatic layers
-impl From<crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}> for {{ message_name }} {
-    fn from(rmw: crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}) -> Self {
+// SequenceElement implementation - establishes type relationship for sequence conversions
+impl crate::rosidl_runtime_rs::SequenceElement for {{ message_name }} {
+    type RmwType = crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }};
+}
+
+// Reference-based conversions (used for sequence element conversions)
+impl From<&{{ message_name }}> for crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }} {
+    fn from(idiomatic: &{{ message_name }}) -> Self {
         Self {
             {% for field in fields %}
-            {{ field.name }}: rmw.{{ field.name }}.into(),
+            {% if field.is_primitive_sequence %}
+            // Vec<primitive> → Sequence<primitive> (direct conversion, no element conversion needed)
+            {{ field.name }}: idiomatic.{{ field.name }}.clone().into(),
+            {% else %}{% if field.is_sequence %}
+            // Vec → Sequence conversion using from_slice_converted for nested messages
+            {{ field.name }}: crate::rosidl_runtime_rs::Sequence::from_slice_converted(&idiomatic.{{ field.name }}),
+            {% else %}{% if field.is_array %}
+            // Arrays are Clone, just clone them
+            {{ field.name }}: idiomatic.{{ field.name }}.clone(),
+            {% else %}{% if field.is_primitive %}
+            // Primitives are Copy, just copy the value
+            {{ field.name }}: idiomatic.{{ field.name }},
+            {% else %}
+            // Nested messages need reference conversion
+            {{ field.name }}: (&idiomatic.{{ field.name }}).into(),
+            {% endif %}{% endif %}{% endif %}{% endif %}
             {% endfor %}
         }
     }
 }
 
-impl From<{{ message_name }}> for crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }} {
-    fn from(idiomatic: {{ message_name }}) -> Self {
+impl From<&crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}> for {{ message_name }} {
+    fn from(rmw: &crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}) -> Self {
         Self {
             {% for field in fields %}
-            {{ field.name }}: idiomatic.{{ field.name }}.into(),
+            {% if field.is_primitive_sequence %}
+            // Sequence<primitive> → Vec<primitive> (direct conversion, no element conversion needed)
+            {{ field.name }}: rmw.{{ field.name }}.clone().into(),
+            {% else %}{% if field.is_sequence %}
+            // Sequence → Vec conversion using to_vec_converted for nested messages
+            {{ field.name }}: rmw.{{ field.name }}.to_vec_converted(),
+            {% else %}{% if field.is_array %}
+            // Arrays are Clone, just clone them
+            {{ field.name }}: rmw.{{ field.name }}.clone(),
+            {% else %}{% if field.is_primitive %}
+            // Primitives are Copy, just copy the value
+            {{ field.name }}: rmw.{{ field.name }},
+            {% else %}
+            // Nested messages need reference conversion
+            {{ field.name }}: (&rmw.{{ field.name }}).into(),
+            {% endif %}{% endif %}{% endif %}{% endif %}
             {% endfor %}
         }
+    }
+}
+
+// Owned conversions delegate to reference-based ones
+impl From<crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}> for {{ message_name }} {
+    fn from(rmw: crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }}) -> Self {
+        Self::from(&rmw)
+    }
+}
+
+impl From<{{ message_name }}> for crate::ffi::msg::{{ message_name|snake_case }}::{{ message_name }} {
+    fn from(idiomatic: {{ message_name }}) -> Self {
+        Self::from(&idiomatic)
     }
 }
 

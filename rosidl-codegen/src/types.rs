@@ -1,6 +1,39 @@
 use rosidl_parser::ast::ConstantValue;
 use rosidl_parser::FieldType;
 
+/// Check if a field type is a sequence (unbounded or bounded)
+pub fn is_sequence_type(field_type: &FieldType) -> bool {
+    matches!(
+        field_type,
+        FieldType::Sequence { .. } | FieldType::BoundedSequence { .. }
+    )
+}
+
+/// Check if a field type is a primitive (no conversion needed)
+pub fn is_primitive_type(field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Primitive(_))
+}
+
+/// Check if a field type is a sequence of primitives (can be copied directly)
+pub fn is_primitive_sequence(field_type: &FieldType) -> bool {
+    match field_type {
+        FieldType::Sequence { element_type } | FieldType::BoundedSequence { element_type, .. } => {
+            matches!(**element_type, FieldType::Primitive(_))
+        }
+        _ => false,
+    }
+}
+
+/// Check if a field type is an array (needs clone, not conversion)
+pub fn is_array_type(field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Array { .. })
+}
+
+/// Check if a field type is a large array (> 32 elements, needs big_array for serde)
+pub fn is_large_array(field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Array { size, .. } if *size > 32)
+}
+
 /// Convert a ConstantValue to a Rust code string
 pub fn constant_value_to_rust(value: &ConstantValue) -> String {
     match value {
@@ -39,7 +72,12 @@ pub fn escape_keyword(name: &str) -> String {
 
 /// Get the Rust type string for a field type
 /// If `rmw_layer` is true, returns RMW types (rosidl_runtime_rs::*), else idiomatic types
-pub fn rust_type_for_field(field_type: &FieldType, rmw_layer: bool) -> String {
+/// `current_package` is used to detect self-references and use `crate::` instead of `pkg::`
+pub fn rust_type_for_field(
+    field_type: &FieldType,
+    rmw_layer: bool,
+    current_package: Option<&str>,
+) -> String {
     match field_type {
         FieldType::Primitive(prim) => prim.rust_type().to_string(),
 
@@ -77,12 +115,12 @@ pub fn rust_type_for_field(field_type: &FieldType, rmw_layer: bool) -> String {
         }
 
         FieldType::Array { element_type, size } => {
-            let elem = rust_type_for_field(element_type, rmw_layer);
+            let elem = rust_type_for_field(element_type, rmw_layer, current_package);
             format!("[{}; {}]", elem, size)
         }
 
         FieldType::Sequence { element_type } => {
-            let elem = rust_type_for_field(element_type, rmw_layer);
+            let elem = rust_type_for_field(element_type, rmw_layer, current_package);
             if rmw_layer {
                 format!("rosidl_runtime_rs::Sequence<{}>", elem)
             } else {
@@ -94,7 +132,7 @@ pub fn rust_type_for_field(field_type: &FieldType, rmw_layer: bool) -> String {
             element_type,
             max_size,
         } => {
-            let elem = rust_type_for_field(element_type, rmw_layer);
+            let elem = rust_type_for_field(element_type, rmw_layer, current_package);
             if rmw_layer {
                 format!("rosidl_runtime_rs::BoundedSequence<{}, {}>", elem, max_size)
             } else {
@@ -104,21 +142,30 @@ pub fn rust_type_for_field(field_type: &FieldType, rmw_layer: bool) -> String {
         }
 
         FieldType::NamespacedType { package, name } => {
+            // Check if this is a self-reference (same package referencing itself)
+            let is_self_ref = package.as_deref() == current_package;
+
             if let Some(pkg) = package {
-                if rmw_layer {
-                    // Cross-package reference for FFI layer: pkg::ffi::msg::module_name::Type
-                    format!("{}::ffi::msg::{}::{}", pkg, to_snake_case(name), name)
+                if is_self_ref {
+                    // Self-reference: use crate:: instead of pkg::
+                    if rmw_layer {
+                        format!("crate::ffi::msg::{}::{}", to_snake_case(name), name)
+                    } else {
+                        format!("crate::msg::{}::{}", to_snake_case(name), name)
+                    }
                 } else {
-                    // Cross-package reference for idiomatic layer: pkg::msg::module_name::Type
-                    format!("{}::msg::{}::{}", pkg, to_snake_case(name), name)
+                    // Cross-package reference
+                    if rmw_layer {
+                        format!("{}::ffi::msg::{}::{}", pkg, to_snake_case(name), name)
+                    } else {
+                        format!("{}::msg::{}::{}", pkg, to_snake_case(name), name)
+                    }
                 }
             } else {
-                // Local same-package type reference
+                // Local same-package type reference (no package specified)
                 if rmw_layer {
-                    // For FFI layer, reference sibling in same ffi/msg module with snake_case module name
                     format!("crate::ffi::msg::{}::{}", to_snake_case(name), name)
                 } else {
-                    // For idiomatic layer, reference sibling in same msg module with snake_case module name
                     format!("crate::msg::{}::{}", to_snake_case(name), name)
                 }
             }
