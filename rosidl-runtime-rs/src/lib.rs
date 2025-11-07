@@ -1,14 +1,25 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Runtime support library for ROS 2 Rust bindings
+//!
+//! This crate provides the core runtime infrastructure for ROS 2 Rust bindings,
+//! including:
+//! - Type traits for message/service/action definitions
+//! - Idiomatic Rust wrappers around ROS C types (String, Sequence)
+//! - FFI bindings to rosidl_runtime_c
+//!
+//! # Architecture
+//!
+//! This crate provides two layers:
+//! - **Idiomatic API**: Safe, ergonomic Rust types (`String`, `Sequence<T>`)
+//! - **FFI layer**: Raw C bindings for per-package code generation
+//!
+//! Most users will use the idiomatic API. Generated package code may use both.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod ffi;
+pub mod sequence;
+pub mod string;
+pub mod traits;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// Re-export commonly used items
+pub use sequence::Sequence;
+pub use string::String;
+pub use traits::{Action, Message, RmwMessage, SequenceAlloc, SequenceElement, Service};
