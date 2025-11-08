@@ -56,6 +56,9 @@ impl AmentInstaller {
         // Create ament index markers
         self.create_markers()?;
 
+        // Create colcon marker
+        self.create_colcon_marker()?;
+
         // Install source files
         self.install_source_files()?;
 
@@ -66,6 +69,9 @@ impl AmentInstaller {
 
         // Install metadata
         self.install_metadata()?;
+
+        // Create colcon DSV files (package.dsv and local_setup.dsv)
+        self.create_dsv_files()?;
 
         if self.verbose {
             eprintln!("✓ Installation complete!");
@@ -122,6 +128,92 @@ impl AmentInstaller {
                 "  Created package type marker: {}",
                 package_type_file.display()
             );
+        }
+
+        Ok(())
+    }
+
+    /// Create colcon marker file
+    /// This marker file is required for colcon to discover the package
+    fn create_colcon_marker(&self) -> Result<()> {
+        let colcon_marker_dir = self
+            .install_base
+            .join("share")
+            .join("colcon-core")
+            .join("packages");
+
+        fs::create_dir_all(&colcon_marker_dir)?;
+
+        let colcon_marker_file = colcon_marker_dir.join(&self.package_name);
+
+        // Parse package.xml to get dependencies
+        let dependencies = self.extract_dependencies();
+        let deps_string = dependencies.join(":");
+
+        fs::write(&colcon_marker_file, deps_string)?;
+
+        if self.verbose {
+            eprintln!("  Created colcon marker: {}", colcon_marker_file.display());
+        }
+
+        Ok(())
+    }
+
+    /// Extract runtime dependencies from package.xml
+    fn extract_dependencies(&self) -> Vec<String> {
+        let package_xml_path = self.project_root.join("package.xml");
+
+        if !package_xml_path.exists() {
+            return Vec::new();
+        }
+
+        let xml_content = match fs::read_to_string(&package_xml_path) {
+            Ok(content) => content,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut dependencies = Vec::new();
+
+        // Simple XML parsing for <depend> tags
+        for line in xml_content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("<depend>") && trimmed.ends_with("</depend>") {
+                let dep = trimmed
+                    .trim_start_matches("<depend>")
+                    .trim_end_matches("</depend>")
+                    .trim();
+                dependencies.push(dep.to_string());
+            }
+        }
+
+        dependencies
+    }
+
+    /// Create colcon DSV files
+    /// These files tell colcon what environment scripts to source
+    fn create_dsv_files(&self) -> Result<()> {
+        let share_pkg_dir = self.share_dir();
+
+        // Create package.dsv
+        let package_dsv = share_pkg_dir.join("package.dsv");
+        let package_dsv_content = format!(
+            "source;share/{}/hook/ament_prefix_path.ps1\n\
+             source;share/{}/hook/ament_prefix_path.dsv\n\
+             source;share/{}/hook/ament_prefix_path.sh\n",
+            self.package_name, self.package_name, self.package_name
+        );
+        fs::write(&package_dsv, package_dsv_content)?;
+
+        if self.verbose {
+            eprintln!("  Created package.dsv");
+        }
+
+        // Create local_setup.dsv (points to package.dsv for simplicity)
+        let local_setup_dsv = share_pkg_dir.join("local_setup.dsv");
+        fs::write(&local_setup_dsv, "")?;  // Empty for now, colcon will handle it
+
+        if self.verbose {
+            eprintln!("  Created local_setup.dsv");
         }
 
         Ok(())
@@ -297,7 +389,7 @@ impl AmentInstaller {
 
     /// Get ament index directory path
     fn ament_index_dir(&self) -> PathBuf {
-        self.share_dir().join("ament_index")
+        self.install_base.join("share").join("ament_index")
     }
 
     /// Get rust source directory path
@@ -364,10 +456,7 @@ mod tests {
         );
         assert_eq!(
             installer.ament_index_dir(),
-            install_base
-                .join("share")
-                .join("test_pkg")
-                .join("ament_index")
+            install_base.join("share").join("ament_index")
         );
         assert_eq!(
             installer.rust_source_dir(),
