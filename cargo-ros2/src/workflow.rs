@@ -44,6 +44,32 @@ impl WorkflowContext {
         }
     }
 
+    /// Create a workspace-level workflow context
+    ///
+    /// This generates bindings in the workspace root's build/ directory,
+    /// allowing all packages in the workspace to share the same bindings.
+    /// This follows ROS 2/colcon conventions where build artifacts go in build/.
+    ///
+    /// # Arguments
+    /// * `workspace_root` - The colcon workspace root directory
+    /// * `project_root` - The current package's root directory
+    /// * `verbose` - Enable verbose output
+    pub fn new_workspace_level(
+        workspace_root: PathBuf,
+        project_root: PathBuf,
+        verbose: bool,
+    ) -> Self {
+        let output_dir = workspace_root.join("build").join("ros2_bindings");
+        let cache_file = workspace_root.join("build").join(CACHE_FILE_NAME);
+
+        WorkflowContext {
+            project_root,
+            output_dir,
+            cache_file,
+            verbose,
+        }
+    }
+
     /// Discover ROS dependencies via ament index
     pub fn discover_ament_packages(&self) -> Result<HashMap<String, PathBuf>> {
         let index =

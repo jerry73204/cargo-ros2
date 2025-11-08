@@ -331,21 +331,58 @@ fn ament_build(
 
     let mut all_patches: HashMap<String, PathBuf> = HashMap::new();
 
-    // 1a. Workspace packages (if --lookup-in-workspace)
+    // Detect workspace root (ALWAYS, regardless of --lookup-in-workspace flag)
+    // This determines whether to use workspace-level bindings (build/ros2_bindings/)
+    // or package-level bindings (target/ros2_bindings/)
+    let mut workspace_root = ctx.project_root.clone();
+    let mut is_workspace = false;
+
+    // Walk up the directory tree to find a colcon workspace
+    let mut current = ctx.project_root.clone();
+    while let Some(parent) = current.parent() {
+        // Check if this directory looks like a workspace (has build/ or install/)
+        if parent.join("build").exists() || parent.join("install").exists() {
+            workspace_root = parent.to_path_buf();
+            is_workspace = true;
+            break; // Found workspace, stop searching
+        }
+        current = parent.to_path_buf();
+    }
+
+    // Create workspace-level context if we're in a workspace
+    let workspace_ctx = if is_workspace {
+        let ws_ctx = WorkflowContext::new_workspace_level(
+            workspace_root.clone(),
+            ctx.project_root.clone(),
+            ctx.verbose,
+        );
+
+        if ctx.verbose {
+            eprintln!(
+                "  Detected colcon workspace at: {}",
+                workspace_root.display()
+            );
+            eprintln!(
+                "  Using workspace-level bindings at: {}",
+                ws_ctx.output_dir.display()
+            );
+        }
+
+        Some(ws_ctx)
+    } else {
+        if ctx.verbose {
+            eprintln!("  No workspace detected, using package-level bindings");
+        }
+        None
+    };
+
+    // Use workspace context if available, otherwise use package-local context
+    let binding_ctx = workspace_ctx.as_ref().unwrap_or(ctx);
+
+    // 1a. Workspace packages (if --lookup-in-workspace flag is set)
     if lookup_in_workspace {
         if ctx.verbose {
             eprintln!("  Discovering workspace packages...");
-        }
-
-        // Find workspace root (go up from project_root until we find no parent or hit root)
-        let mut workspace_root = ctx.project_root.clone();
-        while let Some(parent) = workspace_root.parent() {
-            // Check if parent looks like a workspace (has build/ or install/)
-            if parent.join("build").exists() || parent.join("install").exists() {
-                workspace_root = parent.to_path_buf();
-            } else {
-                break;
-            }
         }
 
         let build_base = workspace_root.join("build");
@@ -409,16 +446,16 @@ fn ament_build(
         if !interface_pkgs.is_empty() {
             use std::process::Command;
 
-            if ctx.verbose {
+            if binding_ctx.verbose {
                 eprintln!("  Generating bindings for interface packages...");
             }
 
             for pkg_name in interface_pkgs.keys() {
                 // Check if bindings already exist
-                let binding_path = ctx.output_dir.join(pkg_name);
+                let binding_path = binding_ctx.output_dir.join(pkg_name);
 
                 // Generate bindings using cargo-ros2-bindgen
-                if ctx.verbose {
+                if binding_ctx.verbose {
                     eprintln!("    Generating bindings for {}...", pkg_name);
                 }
 
@@ -437,7 +474,7 @@ fn ament_build(
                     .arg("--package")
                     .arg(pkg_name)
                     .arg("--output")
-                    .arg(&ctx.output_dir)
+                    .arg(&binding_ctx.output_dir)
                     .env("AMENT_PREFIX_PATH", &new_ament_path)
                     .status();
 
@@ -450,7 +487,7 @@ fn ament_build(
 
                 match bindgen_result {
                     Ok(status) if status.success() => {
-                        if ctx.verbose {
+                        if binding_ctx.verbose {
                             eprintln!("      ✓ Generated bindings for {}", pkg_name);
                         }
                         // Add to patches
@@ -472,28 +509,28 @@ fn ament_build(
     }
 
     // 1b. Installed ament packages
-    if ctx.verbose {
+    if binding_ctx.verbose {
         eprintln!("  Discovering installed ament packages...");
     }
 
     let installed_pkgs = discover_installed_ament_packages()?;
 
-    if ctx.verbose {
+    if binding_ctx.verbose {
         eprintln!("    Found {} installed packages", installed_pkgs.len());
     }
 
     all_patches.extend(installed_pkgs);
 
     // Step 2: Generate bindings
-    if ctx.verbose {
+    if binding_ctx.verbose {
         eprintln!("Step 2: Generating ROS 2 bindings...");
     }
 
-    ctx.run(true)?; // bindings_only = true
+    binding_ctx.run(true)?; // bindings_only = true
 
     // 2b. Add generated bindings to patches
-    // Generated bindings are in target/ros2_bindings/<package>/
-    let bindings_dir = ctx.output_dir.clone();
+    // Generated bindings are in build/ros2_bindings/ (workspace) or target/ros2_bindings/ (standalone)
+    let bindings_dir = binding_ctx.output_dir.clone();
     if bindings_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&bindings_dir) {
             for entry in entries.flatten() {
