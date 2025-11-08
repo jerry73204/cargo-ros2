@@ -12,6 +12,6 @@
   <depend>sensor_msgs</depend>
 
   <export>
-    <build_type>ament_cargo</build_type>
+    <build_type>cargo_ros2</build_type>
   </export>
 </package>
